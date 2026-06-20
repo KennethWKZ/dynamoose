@@ -8,7 +8,7 @@ import Internal from "../Internal";
 import {Serializer, SerializerOptions} from "../Serializer";
 import {Condition, ConditionInitializer} from "../Condition";
 import {Scan, Query} from "../ItemRetriever";
-import {CallbackType, ObjectType, FunctionType, ItemArray, ModelType, KeyObject, InputKey, DeepPartial} from "../General";
+import {CallbackType, DeepPartial, ObjectType, FunctionType, ItemArray, ModelType, KeyObject, InputKey} from "../General";
 import {PopulateItems} from "../Populate";
 import {AttributeMap} from "../Types";
 import * as DynamoDB from "@aws-sdk/client-dynamodb";
@@ -87,6 +87,7 @@ interface ModelUpdateSettings {
 	return?: "item" | "request";
 	condition?: Condition;
 	returnValues?: DynamoDB.ReturnValue;
+	merge?: boolean;
 }
 interface ModelBatchGetItemsResponse<T> extends ItemArray<T> {
 	unprocessedKeys: ObjectType[];
@@ -703,7 +704,41 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 		const table = this.getInternalProperties(internalProperties).table();
 		const {instance} = table.getInternalProperties(internalProperties);
 		let index = 0;
-		const isObject = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v);
+		const mergeEnabled = typeof settings === "object" && (settings as ModelUpdateSettings).merge === true;
+
+		const isPlainObject = (val: any): boolean => {
+			if (val === null || val === undefined || typeof val !== "object") return false;
+			if (Array.isArray(val)) return false;
+			if (val instanceof Set || val instanceof Date) return false;
+			if (typeof Buffer !== "undefined" && val instanceof Buffer) return false;
+			if (val instanceof Uint8Array) return false;
+			return val.constructor === undefined || val.constructor === Object;
+		};
+
+		const flattenForMerge = (
+			parentPathParts: string[],
+			obj: ObjectType,
+			acc: {ExpressionAttributeNames: ObjectType; ExpressionAttributeValues: ObjectType; UpdateExpression: ObjectType},
+			setOperator: string
+		): void => {
+			for (const key of Object.keys(obj)) {
+				const val = obj[key];
+				const nameKey = `#a${index}`;
+				acc.ExpressionAttributeNames[nameKey] = key;
+				const pathParts = [...parentPathParts, nameKey];
+
+				if (isPlainObject(val) && Object.keys(val).length > 0) {
+					index++;
+					flattenForMerge(pathParts, val, acc, setOperator);
+				} else {
+					const valueKey = `:v${index}`;
+					acc.ExpressionAttributeValues[valueKey] = val;
+					acc.UpdateExpression.SET.push(`${pathParts.join(".")}${setOperator}${valueKey}`);
+					index++;
+				}
+			}
+		};
+
 		const getUpdateExpressionObject: () => Promise<any> = async () => {
 			const updateTypes = [
 				{"name": "$SET", "operator": " = ", "objectFromSchemaSettings": {"validate": true, "enum": true, "forceDefault": true, "required": "nested", "modifiers": ["set"]}},
@@ -787,22 +822,30 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 						await schema.requiredCheck(subKey, undefined);
 					}
 
-					let expressionValue = updateType.attributeOnly ? "" : `:v${index}`;
-					accumulator.ExpressionAttributeNames[expressionKey] = subKey;
-					if (!updateType.attributeOnly) {
-						accumulator.ExpressionAttributeValues[expressionValue] = subValue;
+					const shouldMerge = mergeEnabled && updateType.name === "$SET" && isPlainObject(subValue) && Object.keys(subValue).length > 0;
+
+					if (shouldMerge) {
+						accumulator.ExpressionAttributeNames[expressionKey] = subKey;
+						index++;
+						flattenForMerge([expressionKey], subValue, accumulator, updateType.operator);
+					} else {
+						let expressionValue = updateType.attributeOnly ? "" : `:v${index}`;
+						accumulator.ExpressionAttributeNames[expressionKey] = subKey;
+						if (!updateType.attributeOnly) {
+							accumulator.ExpressionAttributeValues[expressionValue] = subValue;
+						}
+
+						if (dynamoType === "L" && updateType.name === "$ADD") {
+							expressionValue = `list_append(${expressionKey}, ${expressionValue})`;
+							updateType = updateTypes.find((a) => a.name === "$SET");
+						}
+
+						const operator = updateType.operator || (updateType.attributeOnly ? "" : " ");
+
+						accumulator.UpdateExpression[updateType.name.slice(1)].push(`${expressionKey}${operator}${expressionValue}`);
+
+						index++;
 					}
-
-					if (dynamoType === "L" && updateType.name === "$ADD") {
-						expressionValue = `list_append(${expressionKey}, ${expressionValue})`;
-						updateType = updateTypes.find((a) => a.name === "$SET");
-					}
-
-					const operator = updateType.operator || (updateType.attributeOnly ? "" : " ");
-
-					accumulator.UpdateExpression[updateType.name.slice(1)].push(`${expressionKey}${operator}${expressionValue}`);
-
-					index++;
 				}
 
 				return accumulator;
@@ -869,6 +912,14 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 			});
 
 			await Promise.all(schema.attributes().map(async (attribute) => {
+				// In merge mode, nested attributes (e.g. "config.timeout") are already handled
+				// by objectFromSchema on the parent object, so skip them here to avoid duplicates.
+				if (mergeEnabled && attribute.includes(".")) {
+					const rootAttr = attribute.split(".")[0];
+					if (Object.values(returnObject.ExpressionAttributeNames).includes(rootAttr)) {
+						return;
+					}
+				}
 				const defaultValue = await schema.defaultCheck(attribute, undefined, {"forceDefault": true});
 				if (defaultValue && !Object.values(returnObject.ExpressionAttributeNames).includes(attribute)) {
 					const updateType = updateTypes.find((a) => a.name === "$SET");
@@ -881,9 +932,10 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				}
 			}));
 
-			Object.values(returnObject.ExpressionAttributeNames).map((attribute: string, index) => {
-				const value: ValueType = Object.values(returnObject.ExpressionAttributeValues)[index];
-				const valueKey = Object.keys(returnObject.ExpressionAttributeValues)[index];
+			Object.entries(returnObject.ExpressionAttributeNames).forEach(([nameKey, attribute]: [string, string]) => {
+				const valueKey = nameKey.replace("#a", ":v");
+				const value: ValueType = returnObject.ExpressionAttributeValues[valueKey];
+				if (value === undefined) return; // Skip parent-only names used in merge mode document paths
 				let dynamoType;
 				try {
 					dynamoType = schema.getAttributeType(attribute, value, {"unknownAttributeAllowed": true});
