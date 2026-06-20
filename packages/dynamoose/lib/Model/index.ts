@@ -776,7 +776,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 						dynamoType = schema.getAttributeType(subKey, subValue, {"unknownAttributeAllowed": true});
 					} catch (e) {} // eslint-disable-line no-empty
 
-					if (dynamoType === "M" && updateType.name === "$SET" && isObject(subValue)
+					if (dynamoType === "M" && updateType.name === "$SET" && subValue !== null && typeof subValue === "object"
 						&& schema.attributes().some((a) => a.startsWith(`${subKey}.`))) {
 						const schemaSettings = {...updateType.objectFromSchemaSettings, "type": "toDynamo", "customTypesDynamo": true, "saveUnknown": true, "mapAttributes": true, "required": false};
 						const processed = (await this.Item.objectFromSchema({[subKey]: subValue}, this, schemaSettings as any))[subKey];
@@ -785,7 +785,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 							for (const [attr, val] of Object.entries(obj)) {
 								accumulator.ExpressionAttributeNames[`#a${index}`] = attr;
 								const k = `${path}.#a${index++}`;
-								if (isObject(val)) {
+								if (val !== null && typeof val === "object") {
 									flatten(k, val);
 								} else {
 									accumulator.ExpressionAttributeValues[`:v${index}`] = val;
