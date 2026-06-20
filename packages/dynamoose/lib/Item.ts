@@ -480,11 +480,16 @@ export class Item extends InternalPropertiesClass<ItemInternalProperties> {
 
 		if (callback) {
 			const localCallback: CallbackType<Item, any> = callback as CallbackType<Item, any>;
-			promise.then(() => {
+			promise.then(async () => {
 				this.getInternalProperties(internalProperties).storedInDynamo = true;
+
+				// First apply custom types conversion to the current item
+				await this.conformToSchema({"customTypesDynamo": true, "type": "fromDynamo"});
 
 				const returnItem = new (this.getInternalProperties(internalProperties).model).Item(savedItem as any);
 				returnItem.getInternalProperties(internalProperties).storedInDynamo = true;
+				// Apply custom types conversion to ensure consistent behavior with get
+				await returnItem.conformToSchema({"customTypesDynamo": true, "type": "fromDynamo"});
 
 				localCallback(null, returnItem);
 			}).catch((error) => callback(error));
@@ -493,8 +498,14 @@ export class Item extends InternalPropertiesClass<ItemInternalProperties> {
 				await promise;
 				this.getInternalProperties(internalProperties).storedInDynamo = true;
 
+				// First apply custom types conversion to the current item
+				await this.conformToSchema({"customTypesDynamo": true, "type": "fromDynamo"});
+
 				const returnItem = new (this.getInternalProperties(internalProperties).model).Item(savedItem as any);
 				returnItem.getInternalProperties(internalProperties).storedInDynamo = true;
+
+				// Apply custom types conversion to ensure consistent behavior with get
+				await returnItem.conformToSchema({"customTypesDynamo": true, "type": "fromDynamo"});
 
 				return returnItem;
 			})();
@@ -575,7 +586,8 @@ Item.attributesWithSchema = async function (item: Item, model: Model<Item>): Pro
 		Object.keys(treeNode).forEach((attr) => {
 			if (attr === "0") {
 				// We check for empty objects here (added `typeof node === "object" && Object.keys(node).length == 0`, see PR https://github.com/dynamoose/dynamoose/pull/1034) to handle the use case of 2d arrays, or arrays within arrays. `node` in that case will be an empty object.
-				if (!node || node.length == 0 || typeof node === "object" && Object.keys(node).length == 0) {
+				// Also adding `!Array.isArray(node)` to the check for non array objects
+				if (!node || !Array.isArray(node) || node.length == 0 || typeof node === "object" && Object.keys(node).length == 0) {
 					node = [{}]; // fake the path for arrays
 				}
 				node.forEach((a, index) => {

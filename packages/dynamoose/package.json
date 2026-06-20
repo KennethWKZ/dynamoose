@@ -1,5 +1,5 @@
 {
-  "name": "dynamoose",
+  "name": "@kennethwkz/dynamoose",
   "version": "4.2.0",
   "description": "Dynamoose is a modeling tool for Amazon's DynamoDB (inspired by Mongoose)",
   "homepage": "https://dynamoosejs.com",
@@ -10,12 +10,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/dynamoose/dynamoose.git"
+    "url": "git+https://github.com/KennethWKZ/dynamoose.git"
   },
   "author": {
-    "name": "Charlie Fish",
-    "email": "fishcharlie.code@gmail.com",
-    "url": "https://charlie.fish"
+    "name": "Kenneth Wong",
+    "email": "kenneth09062004@gmail.com",
+    "url": "https://github.com/KennethWKZ"
   },
   "scripts": {
     "build": "tsc",
@@ -28,8 +28,8 @@
     "test:types": "tsc --project test/types/tsconfig.json"
   },
   "dependencies": {
-    "@aws-sdk/client-dynamodb": "^3.782.0",
-    "@aws-sdk/util-dynamodb": "^3.782.0",
+    "@aws-sdk/client-dynamodb": "^3.1073.0",
+    "@aws-sdk/util-dynamodb": "^3.996.5",
     "dynamoose-utils": "^4.2.0",
     "js-object-utilities": "^2.2.1"
   },
