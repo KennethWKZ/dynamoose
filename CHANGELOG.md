@@ -2,6 +2,12 @@
 
 ---
 
+## Version 4.3.1
+
+Bump version only
+
+---
+
 ## Version 4.3.0
 
 This release adds a `merge` option to `Model.update()` for partial nested object updates, fixes several bugs around custom types and array handling, and restores the build after an AWS SDK v3 bump.
