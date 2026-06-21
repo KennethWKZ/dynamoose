@@ -2,6 +2,40 @@
 
 ---
 
+## Version 4.3.2
+
+Bump version only
+---
+
+## Version 4.3.1
+
+Bump version only
+
+---
+
+## Version 4.3.0
+
+This release adds a `merge` option to `Model.update()` for partial nested object updates, fixes several bugs around custom types and array handling, and restores the build after an AWS SDK v3 bump.
+
+Please [open an issue](https://github.com/KennethWKZ/dynamoose/issues) if you have any questions about this release.
+
+### Features
+
+- Added a `merge` option to `Model.update()` so nested object properties are merged on update instead of replaced
+
+### Bug Fixes
+
+- Fixed an issue where `Model.create` and `Model.get` would return inconsistent types for custom type attributes such as `Date`
+- Fixed array handling in `Item.attributesWithSchema` to prevent errors with empty arrays
+- Use `DeepPartial<T>` in `UpdatePartial` so nested object updates type-check correctly
+
+### Other
+
+- Bumped `@aws-sdk/client-dynamodb` to `^3.1073.0` and `@aws-sdk/util-dynamodb` to `^3.996.5`
+- Added `dom` to the TypeScript `lib` so transitive `@smithy/core` declarations resolve the generic `ReadableStream<T>` type
+
+---
+
 ## Version 4.2.0
 
 This release fixes a bug with `deep_copy` that caused sibling properties sharing the same object reference to be dropped, and adds support for enabling and configuring DynamoDB Streams through Table options.
