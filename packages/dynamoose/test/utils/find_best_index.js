@@ -272,5 +272,17 @@ describe("utils.find_best_index", () => {
 			const chart = {"pk": {"type": "EQ"}, "sk1": {"type": "GT"}, "sk2": {"type": "GT"}};
 			expect(find_best_index(indexes, chart).indexName).toBe("A");
 		});
+
+		it("does not extend the prefix when an equality follows a sort-key inequality", () => {
+			// sk1 inequality (GT) sets sawInequality; a following sk2 EQ must break the
+			// prefix loop (an inequality must be the last conditioned sort attr) instead of
+			// wrongly counting sk2 and over-selecting index B.
+			const indexes = {"GlobalSecondaryIndexes": [
+				{"IndexName": "A", "KeySchema": [{"AttributeName": "pk", "KeyType": "HASH"}, {"AttributeName": "sk1", "KeyType": "RANGE"}]},
+				{"IndexName": "B", "KeySchema": [{"AttributeName": "pk", "KeyType": "HASH"}, {"AttributeName": "sk1", "KeyType": "RANGE"}, {"AttributeName": "sk2", "KeyType": "RANGE"}]}
+			]};
+			const chart = {"pk": {"type": "EQ"}, "sk1": {"type": "GT"}, "sk2": {"type": "EQ"}};
+			expect(find_best_index(indexes, chart).indexName).toBe("A");
+		});
 	});
 });
