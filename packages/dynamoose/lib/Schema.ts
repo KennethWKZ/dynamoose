@@ -1162,7 +1162,7 @@ export class Schema extends InternalPropertiesClass<SchemaInternalProperties> {
 				// the key composition lives entirely in the IndexDeclaration arrays.
 				const topLevel = this.getInternalProperties(internalProperties).settings.indexes;
 				if (topLevel) {
-					[...(topLevel.global || []), ...(topLevel.local || [])].forEach((decl) => {
+					[...topLevel.global || [], ...topLevel.local || []].forEach((decl) => {
 						accumulator.push({"index": decl, "attribute": ""});
 					});
 				}
@@ -1192,8 +1192,8 @@ export class Schema extends InternalPropertiesClass<SchemaInternalProperties> {
 			}
 			const declared = new Set(schema.attributes());
 			const entries: {def: IndexDeclaration; type: "global" | "local"}[] = [
-				...((settingsIndexes.global || []).map((def) => ({"def": def, "type": "global" as const}))),
-				...((settingsIndexes.local || []).map((def) => ({"def": def, "type": "local" as const})))
+				...(settingsIndexes.global || []).map((def) => ({"def": def, "type": "global" as const})),
+				...(settingsIndexes.local || []).map((def) => ({"def": def, "type": "local" as const}))
 			];
 			for (const {"def": def, "type": indexType} of entries) {
 				if (indexType === "local") {
@@ -1616,15 +1616,11 @@ Schema.prototype.getIndexes = async function (this: Schema, model: Model<Item>):
 		}
 		if (isGlobalIndex) {
 			// Partition key: multi-attribute array (new) or the single attached attribute (legacy).
-			const hashAttrs = Array.isArray(indexValue.hashKey) && indexValue.hashKey.length > 0
-				? indexValue.hashKey
-				: [attributeValue];
+			const hashAttrs = Array.isArray(indexValue.hashKey) && indexValue.hashKey.length > 0 ? indexValue.hashKey : [attributeValue];
 			hashAttrs.forEach((attr) => dynamoIndexObject.KeySchema.push({"AttributeName": attr, "KeyType": "HASH"}));
 
 			// Sort key: multi-attribute array (new) or legacy single string.
-			const rangeAttrs = Array.isArray(indexValue.rangeKey)
-				? indexValue.rangeKey
-				: (typeof indexValue.rangeKey === "string" ? [indexValue.rangeKey] : []);
+			const rangeAttrs = Array.isArray(indexValue.rangeKey) ? indexValue.rangeKey : typeof indexValue.rangeKey === "string" ? [indexValue.rangeKey] : [];
 			rangeAttrs.forEach((attr) => dynamoIndexObject.KeySchema.push({"AttributeName": attr, "KeyType": "RANGE"}));
 
 			const throughputObject = utils.dynamoose.get_provisioned_throughput(indexValue.throughput ? indexValue : model.getInternalProperties(internalProperties).table().getInternalProperties(internalProperties).options.throughput === "ON_DEMAND" ? {} : model.getInternalProperties(internalProperties).table().getInternalProperties(internalProperties).options);

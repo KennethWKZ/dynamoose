@@ -219,7 +219,7 @@ ItemRetriever.prototype.getRequest = async function (this: ItemRetriever): Promi
 	}
 	if (this.getInternalProperties(internalProperties).internalSettings.typeInformation.type === "query") {
 		const index = utils.array_flatten(Object.values(indexes)).find((index) => index.IndexName === object.IndexName) || indexes.TableIndex;
-		const {hash: hashKeys, range: rangeKeys} = index.KeySchema.reduce((res, item) => {
+		const {"hash": hashKeys, "range": rangeKeys} = index.KeySchema.reduce((res, item) => {
 			res[item.KeyType.toLowerCase()].push(item.AttributeName);
 			return res;
 		}, {"hash": [], "range": []} as {[key: string]: string[]});
