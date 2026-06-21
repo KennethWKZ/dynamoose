@@ -3557,6 +3557,42 @@ describe("Model", () => {
 					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v2": {"S": "Charlie"}});
 				});
 
+				it("Should deep-merge a plain object $SET when {merge: true} is passed", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					const schema = new dynamoose.Schema({"id": Number, "data": {"type": Object}}, {"saveUnknown": true});
+					User = dynamoose.model("User", schema);
+					new dynamoose.Table("User", [User]);
+
+					await callType.func(User).bind(User)({"id": 1}, {"$SET": {"data": {"profile": {"name": "Charlie"}, "age": 30}}}, {"merge": true});
+					expect(updateItemParams).toBeInstanceOf(Object);
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0.#a1.#a2 = :v2, #a0.#a3 = :v3");
+					expect(updateItemParams.ExpressionAttributeNames).toEqual({"#a0": "data", "#a1": "profile", "#a2": "name", "#a3": "age"});
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v2": {"S": "Charlie"}, ":v3": {"N": "30"}});
+				});
+
+				it("Should skip nested default attributes when {merge: true} is passed on a typed map", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "data": {"type": Object, "schema": {"name": String, "age": {"type": Number, "default": 5}}}});
+					new dynamoose.Table("User", [User]);
+
+					await callType.func(User).bind(User)({"id": 1}, {"data": {"name": "Charlie"}}, {"merge": true});
+					expect(updateItemParams).toBeInstanceOf(Object);
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0.#a1 = :v2");
+					expect(updateItemParams.ExpressionAttributeNames).toEqual({"#a0": "data", "#a1": "name"});
+					expect(Object.values(updateItemParams.ExpressionAttributeNames)).not.toContain("age");
+				});
+
+				it("Should recursively flatten a deeply nested map attribute on $SET", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "data": {"type": Object, "schema": {"profile": {"type": Object, "schema": {"name": String}}}}});
+					new dynamoose.Table("User", [User]);
+
+					await callType.func(User).bind(User)({"id": 1}, {"data": {"profile": {"name": "Charlie"}}});
+					expect(updateItemParams).toBeInstanceOf(Object);
+					expect(updateItemParams.UpdateExpression).toContain("#a0.#a");
+					expect(Object.values(updateItemParams.ExpressionAttributeNames)).toEqual(expect.arrayContaining(["data", "profile", "name"]));
+				});
+
 				it("Should use default value if deleting property", async () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", {"id": Number, "name": {"type": String, "default": "Bob"}});
