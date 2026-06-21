@@ -3582,6 +3582,18 @@ describe("Model", () => {
 					expect(Object.values(updateItemParams.ExpressionAttributeNames)).not.toContain("age");
 				});
 
+				it("Should treat non-plain-object nested values as leaves when {merge: true} is passed", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					const schema = new dynamoose.Schema({"id": Number, "data": {"type": Object}}, {"saveUnknown": true});
+					User = dynamoose.model("User", schema);
+					new dynamoose.Table("User", [User]);
+
+					await callType.func(User).bind(User)({"id": 1}, {"$SET": {"data": {"tags": ["a"], "buf": Buffer.from("x"), "u8": new Uint8Array([1])}}}, {"merge": true});
+					expect(updateItemParams).toBeInstanceOf(Object);
+					expect(updateItemParams.UpdateExpression).toContain("#a0.#a");
+					expect(Object.values(updateItemParams.ExpressionAttributeNames)).toEqual(expect.arrayContaining(["data", "tags", "buf", "u8"]));
+				});
+
 				it("Should recursively flatten a deeply nested map attribute on $SET", async () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", {"id": Number, "data": {"type": Object, "schema": {"profile": {"type": Object, "schema": {"name": String}}}}});
