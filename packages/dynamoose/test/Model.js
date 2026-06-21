@@ -4812,7 +4812,10 @@ describe("Model", () => {
 
 			it("Should not delete keys from object", () => {
 				const obj = {"id": 1, "name": "Bob"};
+				const oldWarn = console.warn; // eslint-disable-line no-console
+				console.warn = () => {}; // eslint-disable-line no-console
 				User.transaction.update(obj, utils.empty_function);
+				console.warn = oldWarn; // eslint-disable-line no-console
 				expect(obj).toEqual({"id": 1, "name": "Bob"});
 			});
 		});
