@@ -20,7 +20,7 @@
   "dependencies": {
     "dynamoose-utils": "^4.2.0",
     "js-object-utilities": "^2.2.1",
-    "uuid": "^9.0.1"
+    "uuid": "^14.0.1"
   },
   "license": "Unlicense",
   "funding": [
