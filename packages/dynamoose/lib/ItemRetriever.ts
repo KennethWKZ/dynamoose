@@ -188,17 +188,22 @@ ItemRetriever.prototype.getRequest = async function (this: ItemRetriever): Promi
 			object.IndexName = indexSpec.indexName;
 		}
 	}
-	function moveParameterNames (val, prefix): void {
+	function moveParameterNames (val, prefix, comparisonChart, keyConditionTypes): void {
 		const entry = Object.entries(object.ExpressionAttributeNames).find((entry) => entry[1] === val);
 		if (!entry) {
+			return;
+		}
+		// Only promote conditions whose operator is legal in a KeyConditionExpression
+		// (=, <, <=, >, >=, BETWEEN, BEGINS_WITH). Illegal-in-key operators (IN, NE,
+		// CONTAINS, NOT_CONTAINS, EXISTS, NOT_EXISTS) must stay FilterExpression, or
+		// DynamoDB rejects: "Invalid operator used in KeyConditionExpression".
+		const conditionType = comparisonChart[val]?.type;
+		if (typeof conditionType !== "string" || !keyConditionTypes.has(conditionType)) {
 			return;
 		}
 		const [key, value] = entry;
 		const filterExpressionIndex = object.FilterExpression.findIndex((item) => item.includes(key));
 		const filterExpression = object.FilterExpression[filterExpressionIndex];
-		if (filterExpression.includes("attribute_exists") || filterExpression.includes("contains")) {
-			return;
-		}
 		object.ExpressionAttributeNames[`#${prefix}a`] = value;
 		delete object.ExpressionAttributeNames[key];
 
@@ -224,12 +229,17 @@ ItemRetriever.prototype.getRequest = async function (this: ItemRetriever): Promi
 			return res;
 		}, {"hash": [], "range": []} as {[key: string]: string[]});
 
+		// Operators DynamoDB permits inside a KeyConditionExpression (sort-key comparators
+		// plus partition-key equality). Everything else (IN, NE, CONTAINS, EXISTS, ...) is
+		// legal only as a FilterExpression, so promotion must skip those — see moveParameterNames.
+		const KEY_CONDITION_TYPES = new Set(["EQ", "LE", "LT", "GE", "GT", "BETWEEN", "BEGINS_WITH"]);
+		const comparisonChart = await this.getInternalProperties(internalProperties).settings.condition.getInternalProperties(internalProperties).comparisonChart(model);
+
 		// Enforce DynamoDB's native multi-attribute query rules client-side so a malformed
 		// query fails fast with a clear error instead of emitting a request DynamoDB rejects.
-		// Only multi-attribute keys are validated; single-attribute behavior is unchanged.
+		// Only multi-attribute keys run this gap/inequality validation; single-attribute keys
+		// have at most one sort key so the contiguous-prefix rule is trivially satisfied.
 		if (hashKeys.length > 1 || rangeKeys.length > 1) {
-			const KEY_CONDITION_TYPES = new Set(["EQ", "LE", "LT", "GE", "GT", "BETWEEN", "BEGINS_WITH"]);
-			const comparisonChart = await this.getInternalProperties(internalProperties).settings.condition.getInternalProperties(internalProperties).comparisonChart(model);
 			// Every partition-key attribute must be conditioned with equality.
 			for (const attr of hashKeys) {
 				if (comparisonChart[attr]?.type !== "EQ") {
@@ -262,10 +272,11 @@ ItemRetriever.prototype.getRequest = async function (this: ItemRetriever): Promi
 		// Each key attribute needs a UNIQUE placeholder prefix. The first attribute
 		// keeps the legacy "qh"/"qr" prefix so single-attribute queries emit identical
 		// params; later attributes get a numeric suffix (qh1, qr1, ...).
-		hashKeys.forEach((attr, idx) => moveParameterNames(attr, idx === 0 ? "qh" : `qh${idx}`));
-		// Sort attributes move left-to-right. moveParameterNames is a no-op for any
-		// attribute not present as a condition (verified: early-return at L193-195).
-		rangeKeys.forEach((attr, idx) => moveParameterNames(attr, idx === 0 ? "qr" : `qr${idx}`));
+		// moveParameterNames no-ops when the attribute has no condition OR its operator
+		// is illegal in a KeyConditionExpression (IN/NE/CONTAINS/EXISTS/...) — those stay
+		// FilterExpression so DynamoDB doesn't reject the query.
+		hashKeys.forEach((attr, idx) => moveParameterNames(attr, idx === 0 ? "qh" : `qh${idx}`, comparisonChart, KEY_CONDITION_TYPES));
+		rangeKeys.forEach((attr, idx) => moveParameterNames(attr, idx === 0 ? "qr" : `qr${idx}`, comparisonChart, KEY_CONDITION_TYPES));
 	}
 	if (this.getInternalProperties(internalProperties).settings.consistent) {
 		object.ConsistentRead = this.getInternalProperties(internalProperties).settings.consistent;
