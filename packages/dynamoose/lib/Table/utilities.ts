@@ -69,6 +69,10 @@ export async function createTableRequest (table: Table): Promise<DynamoDB.Create
 		object.TableClass = DynamoDB.TableClass.STANDARD_INFREQUENT_ACCESS;
 	}
 
+	if (table.getInternalProperties(internalProperties).options.deletionProtection) {
+		object.DeletionProtectionEnabled = true;
+	}
+
 	const tags = getExpectedTags(table);
 	if (tags) {
 		object.Tags = tags;

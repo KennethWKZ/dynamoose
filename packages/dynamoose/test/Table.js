@@ -537,6 +537,33 @@ describe("Table", () => {
 						});
 					});
 
+					it("Should call createTable with correct parameters when deletionProtection is true", async () => {
+						const tableName = "Cat";
+						const model = dynamoose.model(tableName, {"id": String});
+						new instance.Table(tableName, [model], {"deletionProtection": true});
+						await utils.set_immediate_promise();
+						expect(createTableParams).toEqual({
+							"AttributeDefinitions": [{"AttributeName": "id", "AttributeType": "S"}],
+							"KeySchema": [{"AttributeName": "id", "KeyType": "HASH"}],
+							"ProvisionedThroughput": {"ReadCapacityUnits": 1, "WriteCapacityUnits": 1},
+							"TableName": tableName,
+							"DeletionProtectionEnabled": true
+						});
+					});
+
+					it("Should call createTable without DeletionProtectionEnabled when deletionProtection is false", async () => {
+						const tableName = "Cat";
+						const model = dynamoose.model(tableName, {"id": String});
+						new instance.Table(tableName, [model], {"deletionProtection": false});
+						await utils.set_immediate_promise();
+						expect(createTableParams).toEqual({
+							"AttributeDefinitions": [{"AttributeName": "id", "AttributeType": "S"}],
+							"KeySchema": [{"AttributeName": "id", "KeyType": "HASH"}],
+							"ProvisionedThroughput": {"ReadCapacityUnits": 1, "WriteCapacityUnits": 1},
+							"TableName": tableName
+						});
+					});
+
 					it("Shouldn't call createTable if table already exists", async () => {
 						instance.aws.ddb.set({
 							"createTable": (params) => {
