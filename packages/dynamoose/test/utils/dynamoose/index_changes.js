@@ -292,10 +292,33 @@ describe("utils.dynamoose.index_changes", () => {
 				}
 			],
 			"schema": {"id": String, "data1": {"type": String, "index": {"name": "data-index-1", "type": "global", "project": ["data3", "data2"]}}, "data2": String, "data3": String},
-			"output": [{
-				"name": "data-index-1",
-				"type": "delete"
-			}]
+			// Same-name GSI whose projection changed: deleted and recreated in a single pass.
+			"output": [
+				{
+					"name": "data-index-1",
+					"type": "delete"
+				},
+				{
+					"spec": {
+						"IndexName": "data-index-1",
+						"KeySchema": [
+							{
+								"AttributeName": "data1",
+								"KeyType": "HASH"
+							}
+						],
+						"Projection": {
+							"NonKeyAttributes": ["data2", "data3"],
+							"ProjectionType": "INCLUDE"
+						},
+						"ProvisionedThroughput": {
+							"ReadCapacityUnits": 1,
+							"WriteCapacityUnits": 1
+						}
+					},
+					"type": "add"
+				}
+			]
 		}
 	];
 
@@ -383,11 +406,18 @@ describe("utils.dynamoose.index_changes", () => {
 			"ProvisionedThroughput": {"ReadCapacityUnits": 1, "WriteCapacityUnits": 1}
 		}];
 		const result = await utils.dynamoose.index_changes(table, input);
-		// The multi-element difference IS detected: the stale index is marked for deletion.
-		// Production behavior (index_changes.ts L60): a same-named index already present in
-		// existingIndexes is excluded from the "add" list, so it is only deleted here and
-		// recreated on a later reconciliation pass — the emitted diff is delete-only.
-		expect(result).toContainEqual({"name": "TRI", "type": "delete"});
-		expect(result.some((c) => c.type === "add" && c.spec.IndexName === "TRI")).toBe(false);
+		// The multi-element difference IS detected: the stale index is marked for deletion and,
+		// because it is still expected, recreated in the SAME reconciliation pass (single-run
+		// convergence). The delete is emitted before the add so `updateTable` drops the stale
+		// index and waits for it to clear before creating the corrected one.
+		const deleteIndex = result.findIndex((c) => c.type === "delete" && c.name === "TRI");
+		const addIndex = result.findIndex((c) => c.type === "add" && c.spec.IndexName === "TRI");
+		expect(deleteIndex).toBeGreaterThanOrEqual(0);
+		expect(addIndex).toBeGreaterThan(deleteIndex);
+		expect(result[addIndex].spec.KeySchema).toEqual([
+			{"AttributeName": "tournamentId", "KeyType": "HASH"},
+			{"AttributeName": "region", "KeyType": "HASH"},
+			{"AttributeName": "round", "KeyType": "RANGE"}
+		]);
 	});
 });

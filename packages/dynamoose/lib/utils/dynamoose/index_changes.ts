@@ -57,7 +57,18 @@ const index_changes = async (table: Table, existingIndexes = []): Promise<(Model
 	output.push(...deleteIndexes);
 
 	// Indexes to create
-	const createIndexes: ModelIndexAddChange[] = (expectedIndexes.GlobalSecondaryIndexes || []).filter((index) => ![...output.map((i) => (i as {name: string; type: string}).name), ...existingIndexes.map((i) => i.IndexName)].includes(index.IndexName)).map((index) => ({
+	// An index needs (re)creating when it is not already present in DynamoDB in its expected form.
+	// That covers a brand-new index, and a same-name index whose KeySchema/Projection changed: the
+	// latter was queued for deletion above, so we recreate it in the same reconciliation pass rather
+	// than only on the next `initialize` (two-run convergence). `updateTable` applies the changes
+	// sequentially — the delete runs and waits for active before the create — which satisfies
+	// DynamoDB's one-GSI-change-per-`updateTable` limit.
+	const deletedIndexNames = deleteIndexes.map((index) => index.name);
+	const createIndexes: ModelIndexAddChange[] = (expectedIndexes.GlobalSecondaryIndexes || []).filter((index) => {
+		const existsInTable = existingIndexes.some((existingIndex) => existingIndex.IndexName === index.IndexName);
+		const queuedForDelete = deletedIndexNames.includes(index.IndexName as string);
+		return !existsInTable || queuedForDelete;
+	}).map((index) => ({
 		"type": TableIndexChangeType.add,
 		"spec": index
 	}));
