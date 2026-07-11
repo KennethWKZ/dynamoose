@@ -2118,6 +2118,66 @@ describe("Table", () => {
 					"PointInTimeRecoverySpecification": {"PointInTimeRecoveryEnabled": true}
 				}]);
 			});
+
+			it("Should include RecoveryPeriodInDays when enabling with a recovery period", async () => {
+				const tableName = "Cat";
+				const model = dynamoose.model(tableName, {"id": String});
+				new dynamoose.Table(tableName, [model], {"pointInTimeRecovery": {"enabled": true, "recoveryPeriodInDays": 7}, "update": ["pointInTimeRecovery"]});
+				await utils.set_immediate_promise();
+				expect(updateContinuousBackupsParams).toEqual([{
+					"TableName": tableName,
+					"PointInTimeRecoverySpecification": {"PointInTimeRecoveryEnabled": true, "RecoveryPeriodInDays": 7}
+				}]);
+			});
+
+			it("Should call updateContinuousBackups when only the recovery period changes", async () => {
+				const tableName = "Cat";
+				describeContinuousBackupsFunction = () => Promise.resolve({
+					"ContinuousBackupsDescription": {
+						"ContinuousBackupsStatus": "ENABLED",
+						"PointInTimeRecoveryDescription": {"PointInTimeRecoveryStatus": "ENABLED", "RecoveryPeriodInDays": 35}
+					}
+				});
+				const model = dynamoose.model(tableName, {"id": String});
+				new dynamoose.Table(tableName, [model], {"pointInTimeRecovery": {"enabled": true, "recoveryPeriodInDays": 7}, "update": ["pointInTimeRecovery"]});
+				await utils.set_immediate_promise();
+				expect(updateContinuousBackupsParams).toEqual([{
+					"TableName": tableName,
+					"PointInTimeRecoverySpecification": {"PointInTimeRecoveryEnabled": true, "RecoveryPeriodInDays": 7}
+				}]);
+			});
+
+			it("Should not call updateContinuousBackups when the recovery period already matches", async () => {
+				const tableName = "Cat";
+				describeContinuousBackupsFunction = () => Promise.resolve({
+					"ContinuousBackupsDescription": {
+						"ContinuousBackupsStatus": "ENABLED",
+						"PointInTimeRecoveryDescription": {"PointInTimeRecoveryStatus": "ENABLED", "RecoveryPeriodInDays": 7}
+					}
+				});
+				const model = dynamoose.model(tableName, {"id": String});
+				new dynamoose.Table(tableName, [model], {"pointInTimeRecovery": {"enabled": true, "recoveryPeriodInDays": 7}, "update": ["pointInTimeRecovery"]});
+				await utils.set_immediate_promise();
+				expect(updateContinuousBackupsParams).toEqual([]);
+			});
+
+			it("Should throw InvalidParameter when recoveryPeriodInDays is above 35", () => {
+				const tableName = "Cat";
+				const model = dynamoose.model(tableName, {"id": String});
+				expect(() => new dynamoose.Table(tableName, [model], {"pointInTimeRecovery": {"enabled": true, "recoveryPeriodInDays": 36}})).toThrow("pointInTimeRecovery.recoveryPeriodInDays must be an integer between 1 and 35.");
+			});
+
+			it("Should throw InvalidParameter when recoveryPeriodInDays is below 1", () => {
+				const tableName = "Cat";
+				const model = dynamoose.model(tableName, {"id": String});
+				expect(() => new dynamoose.Table(tableName, [model], {"pointInTimeRecovery": {"enabled": true, "recoveryPeriodInDays": 0}})).toThrow("pointInTimeRecovery.recoveryPeriodInDays must be an integer between 1 and 35.");
+			});
+
+			it("Should throw InvalidParameter when recoveryPeriodInDays is not an integer", () => {
+				const tableName = "Cat";
+				const model = dynamoose.model(tableName, {"id": String});
+				expect(() => new dynamoose.Table(tableName, [model], {"pointInTimeRecovery": {"enabled": true, "recoveryPeriodInDays": 7.5}})).toThrow("pointInTimeRecovery.recoveryPeriodInDays must be an integer between 1 and 35.");
+			});
 		});
 
 		describe("Time To Live", () => {

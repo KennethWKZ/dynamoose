@@ -283,6 +283,13 @@ export class Table extends InternalPropertiesClass<TableInternalProperties> {
 		if (!utils.all_elements_match(models.map((model: any) => model.Model.getInternalProperties(internalProperties).getRangeKey()).filter((key) => Boolean(key)))) {
 			throw new CustomError.InvalidParameter("rangeKey's for all models must match.");
 		}
+		const pointInTimeRecoveryOption = options.pointInTimeRecovery;
+		if (pointInTimeRecoveryOption && pointInTimeRecoveryOption.recoveryPeriodInDays !== undefined) {
+			const recoveryPeriodInDays = pointInTimeRecoveryOption.recoveryPeriodInDays;
+			if (!Number.isInteger(recoveryPeriodInDays) || recoveryPeriodInDays < 1 || recoveryPeriodInDays > 35) {
+				throw new CustomError.InvalidParameter("pointInTimeRecovery.recoveryPeriodInDays must be an integer between 1 and 35.");
+			}
+		}
 		if (options.expires) {
 			if (typeof options.expires === "number") {
 				options.expires = {
