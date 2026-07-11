@@ -537,6 +537,33 @@ describe("Table", () => {
 						});
 					});
 
+					it("Should call createTable with correct parameters when deletionProtection is true", async () => {
+						const tableName = "Cat";
+						const model = dynamoose.model(tableName, {"id": String});
+						new instance.Table(tableName, [model], {"deletionProtection": true});
+						await utils.set_immediate_promise();
+						expect(createTableParams).toEqual({
+							"AttributeDefinitions": [{"AttributeName": "id", "AttributeType": "S"}],
+							"KeySchema": [{"AttributeName": "id", "KeyType": "HASH"}],
+							"ProvisionedThroughput": {"ReadCapacityUnits": 1, "WriteCapacityUnits": 1},
+							"TableName": tableName,
+							"DeletionProtectionEnabled": true
+						});
+					});
+
+					it("Should call createTable without DeletionProtectionEnabled when deletionProtection is false", async () => {
+						const tableName = "Cat";
+						const model = dynamoose.model(tableName, {"id": String});
+						new instance.Table(tableName, [model], {"deletionProtection": false});
+						await utils.set_immediate_promise();
+						expect(createTableParams).toEqual({
+							"AttributeDefinitions": [{"AttributeName": "id", "AttributeType": "S"}],
+							"KeySchema": [{"AttributeName": "id", "KeyType": "HASH"}],
+							"ProvisionedThroughput": {"ReadCapacityUnits": 1, "WriteCapacityUnits": 1},
+							"TableName": tableName
+						});
+					});
+
 					it("Shouldn't call createTable if table already exists", async () => {
 						instance.aws.ddb.set({
 							"createTable": (params) => {
@@ -1904,6 +1931,271 @@ describe("Table", () => {
 						expect(updateTableParams).toEqual([]);
 					});
 				});
+			});
+		});
+
+		describe("Deletion Protection", () => {
+			let updateTableParams = [];
+			let describeTableFunction;
+
+			beforeEach(() => {
+				dynamoose.Table.defaults.set({"create": false, "waitForActive": false});
+				updateTableParams = [];
+				describeTableFunction = () => Promise.resolve({
+					"Table": {
+						"ProvisionedThroughput": {"ReadCapacityUnits": 1, "WriteCapacityUnits": 1},
+						"TableStatus": "ACTIVE"
+					}
+				});
+				dynamoose.aws.ddb.set({
+					"describeTable": () => describeTableFunction(),
+					"updateTable": (params) => {
+						updateTableParams.push(params);
+						return Promise.resolve();
+					},
+					"listTagsOfResource": () => Promise.resolve({"Tags": []})
+				});
+			});
+
+			afterEach(() => {
+				dynamoose.aws.ddb.revert();
+			});
+
+			const updateOptions = [true, ["deletionProtection"]];
+
+			updateOptions.forEach((updateOption) => {
+				describe(`{"update": ${JSON.stringify(updateOption)}}`, () => {
+					it("Should call updateTable to enable deletion protection", async () => {
+						const tableName = "Cat";
+						describeTableFunction = () => Promise.resolve({
+							"Table": {
+								"ProvisionedThroughput": {"ReadCapacityUnits": 1, "WriteCapacityUnits": 1},
+								"TableStatus": "ACTIVE",
+								"DeletionProtectionEnabled": false
+							}
+						});
+						const model = dynamoose.model(tableName, {"id": String});
+						new dynamoose.Table(tableName, [model], {"deletionProtection": true, "update": updateOption});
+						await utils.set_immediate_promise();
+						expect(updateTableParams).toEqual([{"TableName": tableName, "DeletionProtectionEnabled": true}]);
+					});
+
+					it("Should call updateTable to disable deletion protection", async () => {
+						const tableName = "Cat";
+						describeTableFunction = () => Promise.resolve({
+							"Table": {
+								"ProvisionedThroughput": {"ReadCapacityUnits": 1, "WriteCapacityUnits": 1},
+								"TableStatus": "ACTIVE",
+								"DeletionProtectionEnabled": true
+							}
+						});
+						const model = dynamoose.model(tableName, {"id": String});
+						new dynamoose.Table(tableName, [model], {"deletionProtection": false, "update": updateOption});
+						await utils.set_immediate_promise();
+						expect(updateTableParams).toEqual([{"TableName": tableName, "DeletionProtectionEnabled": false}]);
+					});
+
+					it("Should not call updateTable when deletion protection already matches", async () => {
+						const tableName = "Cat";
+						describeTableFunction = () => Promise.resolve({
+							"Table": {
+								"ProvisionedThroughput": {"ReadCapacityUnits": 1, "WriteCapacityUnits": 1},
+								"TableStatus": "ACTIVE",
+								"DeletionProtectionEnabled": true
+							}
+						});
+						const model = dynamoose.model(tableName, {"id": String});
+						new dynamoose.Table(tableName, [model], {"deletionProtection": true, "update": updateOption});
+						await utils.set_immediate_promise();
+						expect(updateTableParams).toEqual([]);
+					});
+				});
+			});
+		});
+
+		describe("Point In Time Recovery", () => {
+			let updateContinuousBackupsParams = [];
+			let describeContinuousBackupsFunction;
+
+			beforeEach(() => {
+				dynamoose.Table.defaults.set({"create": false, "waitForActive": false});
+				updateContinuousBackupsParams = [];
+				describeContinuousBackupsFunction = () => Promise.resolve({
+					"ContinuousBackupsDescription": {
+						"ContinuousBackupsStatus": "ENABLED",
+						"PointInTimeRecoveryDescription": {"PointInTimeRecoveryStatus": "DISABLED"}
+					}
+				});
+				dynamoose.aws.ddb.set({
+					"describeTable": () => Promise.resolve({
+						"Table": {
+							"ProvisionedThroughput": {"ReadCapacityUnits": 1, "WriteCapacityUnits": 1},
+							"TableStatus": "ACTIVE"
+						}
+					}),
+					"createTable": () => Promise.resolve(),
+					"updateTable": () => Promise.resolve(),
+					"listTagsOfResource": () => Promise.resolve({"Tags": []}),
+					"describeContinuousBackups": () => describeContinuousBackupsFunction(),
+					"updateContinuousBackups": (params) => {
+						updateContinuousBackupsParams.push(params);
+						return Promise.resolve();
+					}
+				});
+			});
+
+			afterEach(() => {
+				dynamoose.aws.ddb.revert();
+			});
+
+			const updateOptions = [true, ["pointInTimeRecovery"]];
+
+			updateOptions.forEach((updateOption) => {
+				describe(`{"update": ${JSON.stringify(updateOption)}}`, () => {
+					it("Should call updateContinuousBackups to enable when currently disabled", async () => {
+						const tableName = "Cat";
+						const model = dynamoose.model(tableName, {"id": String});
+						new dynamoose.Table(tableName, [model], {"pointInTimeRecovery": {"enabled": true}, "update": updateOption});
+						await utils.set_immediate_promise();
+						expect(updateContinuousBackupsParams).toEqual([{
+							"TableName": tableName,
+							"PointInTimeRecoverySpecification": {"PointInTimeRecoveryEnabled": true}
+						}]);
+					});
+
+					it("Should not call updateContinuousBackups when already matching", async () => {
+						const tableName = "Cat";
+						describeContinuousBackupsFunction = () => Promise.resolve({
+							"ContinuousBackupsDescription": {
+								"ContinuousBackupsStatus": "ENABLED",
+								"PointInTimeRecoveryDescription": {"PointInTimeRecoveryStatus": "ENABLED"}
+							}
+						});
+						const model = dynamoose.model(tableName, {"id": String});
+						new dynamoose.Table(tableName, [model], {"pointInTimeRecovery": {"enabled": true}, "update": updateOption});
+						await utils.set_immediate_promise();
+						expect(updateContinuousBackupsParams).toEqual([]);
+					});
+
+					it("Should warn and skip when DynamoDB Local throws UnknownOperationException", async () => {
+						const tableName = "Cat";
+						const warnStub = jest.spyOn(console, "warn").mockImplementation(() => {});
+						describeContinuousBackupsFunction = () => Promise.reject({"name": "UnknownOperationException"});
+						const model = dynamoose.model(tableName, {"id": String});
+						new dynamoose.Table(tableName, [model], {"pointInTimeRecovery": {"enabled": true}, "update": updateOption});
+						await utils.set_immediate_promise();
+						expect(updateContinuousBackupsParams).toEqual([]);
+						expect(warnStub).toHaveBeenCalled();
+						warnStub.mockRestore();
+					});
+				});
+			});
+
+			it("Should call updateContinuousBackups to disable when explicitly requested via the update array", async () => {
+				const tableName = "Cat";
+				describeContinuousBackupsFunction = () => Promise.resolve({
+					"ContinuousBackupsDescription": {
+						"ContinuousBackupsStatus": "ENABLED",
+						"PointInTimeRecoveryDescription": {"PointInTimeRecoveryStatus": "ENABLED"}
+					}
+				});
+				const model = dynamoose.model(tableName, {"id": String});
+				new dynamoose.Table(tableName, [model], {"pointInTimeRecovery": {"enabled": false}, "update": ["pointInTimeRecovery"]});
+				await utils.set_immediate_promise();
+				expect(updateContinuousBackupsParams).toEqual([{
+					"TableName": tableName,
+					"PointInTimeRecoverySpecification": {"PointInTimeRecoveryEnabled": false}
+				}]);
+			});
+
+			it("Should enable point in time recovery after create when create is true", async () => {
+				const tableName = "Cat";
+				const model = dynamoose.model(tableName, {"id": String});
+				new dynamoose.Table(tableName, [model], {"create": true, "waitForActive": false, "pointInTimeRecovery": {"enabled": true}});
+				await utils.set_immediate_promise();
+				expect(updateContinuousBackupsParams).toEqual([{
+					"TableName": tableName,
+					"PointInTimeRecoverySpecification": {"PointInTimeRecoveryEnabled": true}
+				}]);
+			});
+
+			it("Should not call point-in-time recovery APIs for a bare update:true when disabled", async () => {
+				const tableName = "Cat";
+				let describeContinuousBackupsCalled = false;
+				describeContinuousBackupsFunction = () => {
+					describeContinuousBackupsCalled = true;
+					return Promise.resolve({
+						"ContinuousBackupsDescription": {
+							"ContinuousBackupsStatus": "ENABLED",
+							"PointInTimeRecoveryDescription": {"PointInTimeRecoveryStatus": "DISABLED"}
+						}
+					});
+				};
+				const model = dynamoose.model(tableName, {"id": String});
+				new dynamoose.Table(tableName, [model], {"update": true});
+				await utils.set_immediate_promise();
+				expect(describeContinuousBackupsCalled).toEqual(false);
+				expect(updateContinuousBackupsParams).toEqual([]);
+			});
+
+			it("Should include RecoveryPeriodInDays when enabling with a recovery period", async () => {
+				const tableName = "Cat";
+				const model = dynamoose.model(tableName, {"id": String});
+				new dynamoose.Table(tableName, [model], {"pointInTimeRecovery": {"enabled": true, "recoveryPeriodInDays": 7}, "update": ["pointInTimeRecovery"]});
+				await utils.set_immediate_promise();
+				expect(updateContinuousBackupsParams).toEqual([{
+					"TableName": tableName,
+					"PointInTimeRecoverySpecification": {"PointInTimeRecoveryEnabled": true, "RecoveryPeriodInDays": 7}
+				}]);
+			});
+
+			it("Should call updateContinuousBackups when only the recovery period changes", async () => {
+				const tableName = "Cat";
+				describeContinuousBackupsFunction = () => Promise.resolve({
+					"ContinuousBackupsDescription": {
+						"ContinuousBackupsStatus": "ENABLED",
+						"PointInTimeRecoveryDescription": {"PointInTimeRecoveryStatus": "ENABLED", "RecoveryPeriodInDays": 35}
+					}
+				});
+				const model = dynamoose.model(tableName, {"id": String});
+				new dynamoose.Table(tableName, [model], {"pointInTimeRecovery": {"enabled": true, "recoveryPeriodInDays": 7}, "update": ["pointInTimeRecovery"]});
+				await utils.set_immediate_promise();
+				expect(updateContinuousBackupsParams).toEqual([{
+					"TableName": tableName,
+					"PointInTimeRecoverySpecification": {"PointInTimeRecoveryEnabled": true, "RecoveryPeriodInDays": 7}
+				}]);
+			});
+
+			it("Should not call updateContinuousBackups when the recovery period already matches", async () => {
+				const tableName = "Cat";
+				describeContinuousBackupsFunction = () => Promise.resolve({
+					"ContinuousBackupsDescription": {
+						"ContinuousBackupsStatus": "ENABLED",
+						"PointInTimeRecoveryDescription": {"PointInTimeRecoveryStatus": "ENABLED", "RecoveryPeriodInDays": 7}
+					}
+				});
+				const model = dynamoose.model(tableName, {"id": String});
+				new dynamoose.Table(tableName, [model], {"pointInTimeRecovery": {"enabled": true, "recoveryPeriodInDays": 7}, "update": ["pointInTimeRecovery"]});
+				await utils.set_immediate_promise();
+				expect(updateContinuousBackupsParams).toEqual([]);
+			});
+
+			it("Should throw InvalidParameter when recoveryPeriodInDays is above 35", () => {
+				const tableName = "Cat";
+				const model = dynamoose.model(tableName, {"id": String});
+				expect(() => new dynamoose.Table(tableName, [model], {"pointInTimeRecovery": {"enabled": true, "recoveryPeriodInDays": 36}})).toThrow("pointInTimeRecovery.recoveryPeriodInDays must be an integer between 1 and 35.");
+			});
+
+			it("Should throw InvalidParameter when recoveryPeriodInDays is below 1", () => {
+				const tableName = "Cat";
+				const model = dynamoose.model(tableName, {"id": String});
+				expect(() => new dynamoose.Table(tableName, [model], {"pointInTimeRecovery": {"enabled": true, "recoveryPeriodInDays": 0}})).toThrow("pointInTimeRecovery.recoveryPeriodInDays must be an integer between 1 and 35.");
+			});
+
+			it("Should throw InvalidParameter when recoveryPeriodInDays is not an integer", () => {
+				const tableName = "Cat";
+				const model = dynamoose.model(tableName, {"id": String});
+				expect(() => new dynamoose.Table(tableName, [model], {"pointInTimeRecovery": {"enabled": true, "recoveryPeriodInDays": 7.5}})).toThrow("pointInTimeRecovery.recoveryPeriodInDays must be an integer between 1 and 35.");
 			});
 		});
 

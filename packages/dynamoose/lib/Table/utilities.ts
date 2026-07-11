@@ -69,6 +69,10 @@ export async function createTableRequest (table: Table): Promise<DynamoDB.Create
 		object.TableClass = DynamoDB.TableClass.STANDARD_INFREQUENT_ACCESS;
 	}
 
+	if (table.getInternalProperties(internalProperties).options.deletionProtection) {
+		object.DeletionProtectionEnabled = true;
+	}
+
 	const tags = getExpectedTags(table);
 	if (tags) {
 		object.Tags = tags;
@@ -131,6 +135,43 @@ export async function updateTimeToLive (table: Table): Promise<void> {
 	/* istanbul ignore next */
 	default:
 		break;
+	}
+}
+export async function updatePointInTimeRecovery (table: Table): Promise<void> {
+	const instance = table.getInternalProperties(internalProperties).instance;
+	const pointInTimeRecovery = table.getInternalProperties(internalProperties).options.pointInTimeRecovery;
+	const expectedEnabled = Boolean(pointInTimeRecovery && pointInTimeRecovery.enabled);
+	const expectedPeriod = pointInTimeRecovery ? pointInTimeRecovery.recoveryPeriodInDays : undefined;
+
+	try {
+		const backups = await ddb(instance, "describeContinuousBackups", {
+			"TableName": table.getInternalProperties(internalProperties).name
+		});
+		const description = backups.ContinuousBackupsDescription?.PointInTimeRecoveryDescription;
+		const currentEnabled = description?.PointInTimeRecoveryStatus === "ENABLED";
+		const currentPeriod = description?.RecoveryPeriodInDays;
+
+		const enabledChanged = currentEnabled !== expectedEnabled;
+		const periodChanged = expectedEnabled && typeof expectedPeriod === "number" && expectedPeriod !== currentPeriod;
+
+		if (enabledChanged || periodChanged) {
+			const specification: DynamoDB.PointInTimeRecoverySpecification = {
+				"PointInTimeRecoveryEnabled": expectedEnabled
+			};
+			if (expectedEnabled && typeof expectedPeriod === "number") {
+				specification.RecoveryPeriodInDays = expectedPeriod;
+			}
+			await ddb(instance, "updateContinuousBackups", {
+				"TableName": table.getInternalProperties(internalProperties).name,
+				"PointInTimeRecoverySpecification": specification
+			});
+		}
+	} catch (error) {
+		if (error.name === "UnknownOperationException") {
+			console.warn(`Point-in-time recovery is not currently supported in DynamoDB Local. Skipping point-in-time recovery update for table: ${table.name}`); // eslint-disable-line no-console
+		} else {
+			throw error;
+		}
 	}
 }
 export function waitForActive (table: Table, forceRefreshOnFirstAttempt = true) {
@@ -278,6 +319,21 @@ export async function updateTable (table: Table): Promise<void> {
 				await ddb(instance, "updateTable", object);
 				await waitForActive(table)();
 			}
+		}
+	}
+	// Deletion Protection
+	if (updateAll || (table.getInternalProperties(internalProperties).options.update as TableUpdateOptions[]).includes(TableUpdateOptions.deletionProtection)) {
+		const tableDetails = (await getTableDetails(table)).Table;
+		const expectedDeletionProtection = Boolean(table.getInternalProperties(internalProperties).options.deletionProtection);
+		const currentDeletionProtection = Boolean(tableDetails.DeletionProtectionEnabled);
+
+		if (currentDeletionProtection !== expectedDeletionProtection) {
+			const object: DynamoDB.UpdateTableInput = {
+				"TableName": table.getInternalProperties(internalProperties).name,
+				"DeletionProtectionEnabled": expectedDeletionProtection
+			};
+			await ddb(instance, "updateTable", object);
+			await waitForActive(table)();
 		}
 	}
 }

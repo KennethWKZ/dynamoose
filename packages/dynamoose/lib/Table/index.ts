@@ -8,7 +8,7 @@ import utils from "../utils";
 import * as DynamoDB from "@aws-sdk/client-dynamodb";
 import {IndexItem, TableIndex} from "../Schema";
 import {Item as ItemCarrier} from "../Item";
-import {createTable, createTableRequest, updateTable, updateTimeToLive, waitForActive} from "./utilities";
+import {createTable, createTableRequest, updatePointInTimeRecovery, updateTable, updateTimeToLive, waitForActive} from "./utilities";
 import {TableClass} from "./types";
 import {InternalPropertiesClass} from "../InternalPropertiesClass";
 import {Instance} from "../Instance";
@@ -71,7 +71,7 @@ export class Table extends InternalPropertiesClass<TableInternalProperties> {
 	 * | waitForActive.check | Settings for how Dynamoose should check if the table is active | Object |  |
 	 * | waitForActive.check.timeout | How many milliseconds before Dynamoose should timeout and stop checking if the table is active. | Number | 180000 |
 	 * | waitForActive.check.frequency | How many milliseconds Dynamoose should delay between checks to see if the table is active. If this number is set to 0 it will use `setImmediate()` to run the check again. | Number | 1000 |
-	 * | update | If Dynamoose should update the capacity of the existing table to match the model throughput. If this is a boolean of `true` all update actions will be run. If this is an array of strings, only the actions in the array will be run. The array of strings can include the following settings to update, `ttl`, `indexes`, `throughput`, `tags`, `tableClass`, `streams`. | Boolean \| [String] | false |
+	 * | update | If Dynamoose should update the capacity of the existing table to match the model throughput. If this is a boolean of `true` all update actions will be run. If this is an array of strings, only the actions in the array will be run. The array of strings can include the following settings to update, `ttl`, `indexes`, `throughput`, `tags`, `tableClass`, `streams`, `deletionProtection`, `pointInTimeRecovery`. | Boolean \| [String] | false |
 	 * | expires | The setting to describe the time to live for items created. If you pass in a number it will be used for the `expires.ttl` setting, with default values for everything else. If this is `undefined`, no time to live will be active on the model. | Number \| Object | undefined |
 	 * | expires.ttl | The default amount of time the item should stay alive from creation time in milliseconds. | Number | undefined |
 	 * | expires.attribute | The attribute name for where the item time to live attribute. | String | `ttl` |
@@ -79,10 +79,14 @@ export class Table extends InternalPropertiesClass<TableInternalProperties> {
 	 * | expires.items.returnExpired | If Dynamoose should include expired items when returning retrieved items. | Boolean | true |
 	 * | tags | An object containing key value pairs that should be added to the table as tags. | Object | {} |
 	 * | tableClass | A string representing the table class to use. | "standard" \| "infrequentAccess" | "standard" |
+	 * | deletionProtection | If Dynamoose should enable deletion protection on the table, blocking `DeleteTable` until disabled. | Boolean | false |
 	 * | initialize | If Dynamoose should run it's initialization flow (creating the table, updating the throughput, etc) automatically. | Boolean | true |
 	 * | streamOptions | An object containing settings for [DynamoDB Streams](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Streams.html). | Object | `{"enabled": false, "type": undefined}` |
 	 * | streamOptions.enabled | If Dynamoose should enable [DynamoDB Streams](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Streams.html) for the table. | Boolean | false |
 	 * | streamOptions.type | The type of DynamoDB Stream to enable. If `streamOptions.enabled` is `true`, this property must be set. | "NEW_IMAGE" \| "OLD_IMAGE" \| "NEW_AND_OLD_IMAGES" \| "KEYS_ONLY" | undefined |
+	 * | pointInTimeRecovery | An object containing settings for [Point-in-Time Recovery](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/PointInTimeRecovery.html). | Object | `{"enabled": false}` |
+	 * | pointInTimeRecovery.enabled | If Dynamoose should enable point-in-time recovery (continuous backups) for the table. Note: with `update` set to `true` this can only enable recovery; disabling requires `update` to explicitly include `"pointInTimeRecovery"`. | Boolean | false |
+	 * | pointInTimeRecovery.recoveryPeriodInDays | The recovery window in days (an integer between 1 and 35). Only used when `pointInTimeRecovery.enabled` is `true`; omitted uses the AWS default of 35. | Number | undefined |
 	 *
 	 * The default object is listed below.
 	 *
@@ -106,10 +110,14 @@ export class Table extends InternalPropertiesClass<TableInternalProperties> {
 	 * 	"expires": null,
 	 * 	"tags": {},
 	 * 	"tableClass": "standard",
+	 * 	"deletionProtection": false,
 	 * 	"initialize": true,
 	 * 	"streamOptions": {
 	 * 		"enabled": false,
 	 * 		"type": undefined
+	 * 	},
+	 * 	"pointInTimeRecovery": {
+	 * 		"enabled": false
 	 * 	}
 	 * }
 	 * ```
@@ -238,6 +246,14 @@ export class Table extends InternalPropertiesClass<TableInternalProperties> {
 				if ((this.getInternalProperties(internalProperties).options.create || (Array.isArray(this.getInternalProperties(internalProperties).options.update) ? (this.getInternalProperties(internalProperties).options.update as TableUpdateOptions[]).includes(TableUpdateOptions.ttl) : this.getInternalProperties(internalProperties).options.update)) && options.expires) {
 					setupFlow.push(() => updateTimeToLive(this));
 				}
+				// Update Point In Time Recovery
+				const pointInTimeRecoveryUpdateOption = this.getInternalProperties(internalProperties).options.update;
+				const pointInTimeRecoveryEnabled = this.getInternalProperties(internalProperties).options.pointInTimeRecovery?.enabled;
+				const updateIncludesPointInTimeRecovery = Array.isArray(pointInTimeRecoveryUpdateOption) && pointInTimeRecoveryUpdateOption.includes(TableUpdateOptions.pointInTimeRecovery);
+				const createOrUpdateAllEngagesPointInTimeRecovery = (this.getInternalProperties(internalProperties).options.create || pointInTimeRecoveryUpdateOption === true) && pointInTimeRecoveryEnabled;
+				if (updateIncludesPointInTimeRecovery || createOrUpdateAllEngagesPointInTimeRecovery) {
+					setupFlow.push(() => updatePointInTimeRecovery(this));
+				}
 				// Update
 				if (this.getInternalProperties(internalProperties).options.update && !this.getInternalProperties(internalProperties).alreadyCreated) {
 					setupFlow.push(() => updateTable(this));
@@ -266,6 +282,13 @@ export class Table extends InternalPropertiesClass<TableInternalProperties> {
 		}
 		if (!utils.all_elements_match(models.map((model: any) => model.Model.getInternalProperties(internalProperties).getRangeKey()).filter((key) => Boolean(key)))) {
 			throw new CustomError.InvalidParameter("rangeKey's for all models must match.");
+		}
+		const pointInTimeRecoveryOption = options.pointInTimeRecovery;
+		if (pointInTimeRecoveryOption && pointInTimeRecoveryOption.recoveryPeriodInDays !== undefined) {
+			const recoveryPeriodInDays = pointInTimeRecoveryOption.recoveryPeriodInDays;
+			if (!Number.isInteger(recoveryPeriodInDays) || recoveryPeriodInDays < 1 || recoveryPeriodInDays > 35) {
+				throw new CustomError.InvalidParameter("pointInTimeRecovery.recoveryPeriodInDays must be an integer between 1 and 35.");
+			}
 		}
 		if (options.expires) {
 			if (typeof options.expires === "number") {
@@ -554,11 +577,17 @@ export enum TableUpdateOptions {
 	throughput = "throughput",
 	tags = "tags",
 	tableClass = "tableClass",
-	streams = "streams"
+	streams = "streams",
+	deletionProtection = "deletionProtection",
+	pointInTimeRecovery = "pointInTimeRecovery"
 }
 export interface TableStreamOptions {
 	enabled: boolean;
 	type: "NEW_IMAGE" | "OLD_IMAGE" | "NEW_AND_OLD_IMAGES" | "KEYS_ONLY";
+}
+export interface TablePointInTimeRecoveryOptions {
+	enabled: boolean;
+	recoveryPeriodInDays?: number;
 }
 
 export interface TableOptions {
@@ -574,5 +603,7 @@ export interface TableOptions {
 	tableClass: TableClass;
 	initialize: boolean;
 	streamOptions?: TableStreamOptions;
+	deletionProtection: boolean;
+	pointInTimeRecovery?: TablePointInTimeRecoveryOptions;
 }
 export type TableOptionsOptional = DeepPartial<TableOptions>;

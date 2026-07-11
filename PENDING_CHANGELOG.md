@@ -5,6 +5,8 @@
 ### Features
 
 - Added support for enabling and configuring DynamoDB Streams through Table options
+- Added support for enabling table deletion protection through the `deletionProtection` Table option (applied on create and reconciled on update)
+- Added support for enabling point-in-time recovery through the `pointInTimeRecovery` Table option, including configuring the recovery window with `pointInTimeRecovery.recoveryPeriodInDays`
 
 ### Bug Fixes
 
