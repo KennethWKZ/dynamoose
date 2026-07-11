@@ -2119,6 +2119,25 @@ describe("Table", () => {
 				}]);
 			});
 
+			it("Should not call point-in-time recovery APIs for a bare update:true when disabled", async () => {
+				const tableName = "Cat";
+				let describeContinuousBackupsCalled = false;
+				describeContinuousBackupsFunction = () => {
+					describeContinuousBackupsCalled = true;
+					return Promise.resolve({
+						"ContinuousBackupsDescription": {
+							"ContinuousBackupsStatus": "ENABLED",
+							"PointInTimeRecoveryDescription": {"PointInTimeRecoveryStatus": "DISABLED"}
+						}
+					});
+				};
+				const model = dynamoose.model(tableName, {"id": String});
+				new dynamoose.Table(tableName, [model], {"update": true});
+				await utils.set_immediate_promise();
+				expect(describeContinuousBackupsCalled).toEqual(false);
+				expect(updateContinuousBackupsParams).toEqual([]);
+			});
+
 			it("Should include RecoveryPeriodInDays when enabling with a recovery period", async () => {
 				const tableName = "Cat";
 				const model = dynamoose.model(tableName, {"id": String});

@@ -85,7 +85,7 @@ export class Table extends InternalPropertiesClass<TableInternalProperties> {
 	 * | streamOptions.enabled | If Dynamoose should enable [DynamoDB Streams](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Streams.html) for the table. | Boolean | false |
 	 * | streamOptions.type | The type of DynamoDB Stream to enable. If `streamOptions.enabled` is `true`, this property must be set. | "NEW_IMAGE" \| "OLD_IMAGE" \| "NEW_AND_OLD_IMAGES" \| "KEYS_ONLY" | undefined |
 	 * | pointInTimeRecovery | An object containing settings for [Point-in-Time Recovery](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/PointInTimeRecovery.html). | Object | `{"enabled": false}` |
-	 * | pointInTimeRecovery.enabled | If Dynamoose should enable point-in-time recovery (continuous backups) for the table. | Boolean | false |
+	 * | pointInTimeRecovery.enabled | If Dynamoose should enable point-in-time recovery (continuous backups) for the table. Note: with `update` set to `true` this can only enable recovery; disabling requires `update` to explicitly include `"pointInTimeRecovery"`. | Boolean | false |
 	 * | pointInTimeRecovery.recoveryPeriodInDays | The recovery window in days (an integer between 1 and 35). Only used when `pointInTimeRecovery.enabled` is `true`; omitted uses the AWS default of 35. | Number | undefined |
 	 *
 	 * The default object is listed below.
