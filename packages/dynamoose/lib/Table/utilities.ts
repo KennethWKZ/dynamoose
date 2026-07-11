@@ -284,4 +284,19 @@ export async function updateTable (table: Table): Promise<void> {
 			}
 		}
 	}
+	// Deletion Protection
+	if (updateAll || (table.getInternalProperties(internalProperties).options.update as TableUpdateOptions[]).includes(TableUpdateOptions.deletionProtection)) {
+		const tableDetails = (await getTableDetails(table)).Table;
+		const expectedDeletionProtection = Boolean(table.getInternalProperties(internalProperties).options.deletionProtection);
+		const currentDeletionProtection = Boolean(tableDetails.DeletionProtectionEnabled);
+
+		if (currentDeletionProtection !== expectedDeletionProtection) {
+			const object: DynamoDB.UpdateTableInput = {
+				"TableName": table.getInternalProperties(internalProperties).name,
+				"DeletionProtectionEnabled": expectedDeletionProtection
+			};
+			await ddb(instance, "updateTable", object);
+			await waitForActive(table)();
+		}
+	}
 }
