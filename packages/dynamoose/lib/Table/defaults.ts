@@ -26,7 +26,10 @@ export const original: TableOptions = {
 		"enabled": false,
 		"type": undefined
 	},
-	"deletionProtection": false
+	"deletionProtection": false,
+	"pointInTimeRecovery": {
+		"enabled": false
+	}
 	// "serverSideEncryption": false,
 	// "defaultReturnValues": "ALL_NEW",
 };
