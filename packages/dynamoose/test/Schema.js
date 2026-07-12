@@ -1081,6 +1081,17 @@ describe("Schema", () => {
 				});
 			});
 		});
+
+		it("Should include the TTL attribute after it is injected by Table expires (cache invalidation, issue #1719)", () => {
+			const schema = new dynamoose.Schema({"id": Number, "name": String});
+			const model = dynamoose.model("Cache1719", schema, {});
+			// Populate the memoized attribute list before the TTL attribute is injected.
+			expect(schema.attributes()).not.toContain("ttl");
+			new dynamoose.Table("Cache1719", [model], {"create": false, "waitForActive": false, "expires": {"ttl": 1000, "attribute": "ttl"}});
+			// The Table injects the TTL attribute into the schema after construction, so the
+			// cached attribute list must be invalidated to now reflect the new attribute.
+			expect(schema.attributes()).toContain("ttl");
+		});
 	});
 
 	describe("getSettingValue", () => {

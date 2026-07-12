@@ -289,6 +289,9 @@ export class Table extends InternalPropertiesClass<TableInternalProperties> {
 						return typeof ttl === "number" ? new Date(Date.now() + ttl) : undefined;
 					}
 				};
+				// The TTL attribute was injected after schema construction, so invalidate the
+				// schema's memoization caches to avoid serving a stale attribute view.
+				schema.getInternalProperties(internalProperties).clearCaches();
 			});
 		}
 
