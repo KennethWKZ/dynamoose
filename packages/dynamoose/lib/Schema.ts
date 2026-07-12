@@ -848,6 +848,7 @@ interface SchemaInternalProperties {
 	getDefaultMapAttribute: (attribute: string) => string;
 	getIndexAttributes: () => {index: IndexDefinition | IndexDeclaration; attribute: string}[];
 	getTimestampAttributes: () => GetTimestampAttributesType;
+	clearCaches: () => void;
 }
 
 type GetTimestampAttributesType = ({
@@ -1109,6 +1110,15 @@ export class Schema extends InternalPropertiesClass<SchemaInternalProperties> {
 		this.setInternalProperties(internalProperties, {
 			"schemaObject": parsedObject,
 			"settings": parsedSettings,
+			// Drops the per-schema memoization caches. Must be called whenever schemaObject
+			// is mutated after construction (e.g. the expires/TTL attribute injected by Table),
+			// otherwise the caches would serve a stale view of the schema (issue #1719).
+			"clearCaches": (): void => {
+				getAttributeValueCache.delete(this);
+				getAttributeTypeDetailsCache.delete(this);
+				getAttributeTypeCache.delete(this);
+				attributesNoArgCache.delete(this);
+			},
 			"getMapSettingValuesForKey": (key: string, settingNames?: string[]): string[] => utils.array_flatten(mapSettingNames.filter((name) => !settingNames || settingNames.includes(name)).map((mapSettingName) => {
 				const result = this.getAttributeSettingValue(mapSettingName, key);
 				if (Array.isArray(result)) {
@@ -1419,8 +1429,19 @@ export class Schema extends InternalPropertiesClass<SchemaInternalProperties> {
 	}
 	getAttributeType (key: string, value?: ValueType, settings?: SchemaGetAttributeTypeSettings): string | string[] {
 		try {
+			const standardKey = key.replace(/\.\d+/gu, ".0");
+			let cache = getAttributeTypeCache.get(this);
+			if (!cache) {
+				cache = new Map();
+				getAttributeTypeCache.set(this, cache);
+			}
+			if (cache.has(standardKey)) {
+				return cache.get(standardKey);
+			}
 			const typeDetails = this.getAttributeTypeDetails(key);
-			return Array.isArray(typeDetails) ? (typeDetails as any).map((detail) => detail.dynamodbType) : typeDetails.dynamodbType;
+			const result = Array.isArray(typeDetails) ? (typeDetails as any).map((detail) => detail.dynamodbType) : typeDetails.dynamodbType;
+			cache.set(standardKey, result);
+			return result;
 		} catch (e) {
 			if (settings?.unknownAttributeAllowed && e.message === `Invalid Attribute: ${key}` && value) {
 				return Object.keys(Item.objectToDynamo(value, {"type": "value"}))[0];
@@ -1658,6 +1679,15 @@ interface SchemaAttributesMethodSettings {
 	includeMaps: boolean;
 }
 Schema.prototype.attributes = function (this: Schema, object?: ObjectType, settings?: SchemaAttributesMethodSettings): string[] {
+	// The attribute list is item-independent when no object/settings are supplied, so it
+	// can be memoized per schema. A fresh copy is returned so callers keep a private array.
+	const cacheable = !object && !settings;
+	if (cacheable) {
+		const cached = attributesNoArgCache.get(this);
+		if (cached) {
+			return cached.slice();
+		}
+	}
 	const typePaths = object && this.getTypePaths(object);
 	const main = (object: SchemaDefinition, existingKey = ""): string[] => {
 		return Object.keys(object).reduce((accumulator: string[], key) => {
@@ -1695,12 +1725,40 @@ Schema.prototype.attributes = function (this: Schema, object?: ObjectType, setti
 		}, []);
 	};
 
-	return main(this.getInternalProperties(internalProperties).schemaObject);
+	const result = main(this.getInternalProperties(internalProperties).schemaObject);
+	if (cacheable) {
+		attributesNoArgCache.set(this, result);
+	}
+	return result;
 };
 
+// Memoization caches keyed by Schema instance. A schema definition is immutable
+// after construction, so getAttributeValue and getAttributeTypeDetails are pure
+// functions of their (standardized key, typeIndexOptionMap) inputs. Caching their
+// results avoids re-walking the entire schema for every item when converting large
+// scan/query result sets, which is otherwise a significant bottleneck (issue #1719).
+const getAttributeValueCache = new WeakMap<Schema, Map<string, AttributeDefinition>>();
+const getAttributeTypeDetailsCache = new WeakMap<Schema, Map<string, DynamoDBTypeResult | DynamoDBSetTypeResult | DynamoDBTypeResult[] | DynamoDBSetTypeResult[]>>();
+const getAttributeTypeCache = new WeakMap<Schema, Map<string, string | string[]>>();
+const attributesNoArgCache = new WeakMap<Schema, string[]>();
+function schemaMemoKey (standardKey: string, typeIndexOptionMap?: {}): string {
+	return typeIndexOptionMap && Object.keys(typeIndexOptionMap).length > 0 ? `${standardKey}|${JSON.stringify(typeIndexOptionMap)}` : standardKey;
+}
+
 Schema.prototype.getAttributeValue = function (this: Schema, key: string, settings?: {standardKey?: boolean; typeIndexOptionMap?: {}}): AttributeDefinition {
+	const standardKey = settings?.standardKey ? key : key.replace(/\.\d+/gu, ".0");
+	let cache = getAttributeValueCache.get(this);
+	if (!cache) {
+		cache = new Map();
+		getAttributeValueCache.set(this, cache);
+	}
+	const memoKey = schemaMemoKey(standardKey, settings?.typeIndexOptionMap);
+	if (cache.has(memoKey)) {
+		return cache.get(memoKey);
+	}
+
 	const previousKeyParts = [];
-	let result = (settings?.standardKey ? key : key.replace(/\.\d+/gu, ".0")).split(".").reduce((result, part) => {
+	let result = standardKey.split(".").reduce((result, part) => {
 		if (Array.isArray(result)) {
 			const predefinedIndex = settings && settings.typeIndexOptionMap && settings.typeIndexOptionMap[previousKeyParts.join(".")];
 			if (predefinedIndex !== undefined) {
@@ -1720,6 +1778,7 @@ Schema.prototype.getAttributeValue = function (this: Schema, key: string, settin
 		}
 	}
 
+	cache.set(memoKey, result);
 	return result;
 };
 
@@ -1737,6 +1796,15 @@ function retrieveTypeInfo (type: string, isSet: boolean, key: string, typeSettin
 // TODO: using too many `as` statements in the function below. We should clean this up.
 Schema.prototype.getAttributeTypeDetails = function (this: Schema, key: string, settings: {standardKey?: boolean; typeIndexOptionMap?: {}} = {}): DynamoDBTypeResult | DynamoDBSetTypeResult | DynamoDBTypeResult[] | DynamoDBSetTypeResult[] {
 	const standardKey = settings.standardKey ? key : key.replace(/\.\d+/gu, ".0");
+	let cache = getAttributeTypeDetailsCache.get(this);
+	if (!cache) {
+		cache = new Map();
+		getAttributeTypeDetailsCache.set(this, cache);
+	}
+	const memoKey = schemaMemoKey(standardKey, settings.typeIndexOptionMap);
+	if (cache.has(memoKey)) {
+		return cache.get(memoKey);
+	}
 	const val = this.getAttributeValue(standardKey, {...settings, "standardKey": true});
 	if (typeof val === "undefined") {
 		throw new CustomError.UnknownAttribute(`Invalid Attribute: ${key}`);
@@ -1811,5 +1879,6 @@ Schema.prototype.getAttributeTypeDetails = function (this: Schema, key: string, 
 	});
 
 	const returnObject = result.length < 2 ? result[0] : result;
+	cache.set(memoKey, returnObject);
 	return returnObject;
 };
