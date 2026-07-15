@@ -87,6 +87,9 @@ interface ModelUpdateSettings {
 	return?: "item" | "request";
 	condition?: Condition;
 	returnValues?: DynamoDB.ReturnValue;
+	// Nested object ($SET) handling: `undefined` (default) shallow-merges into the existing map,
+	// `true` deep-merges, `false` replaces the whole attribute as a map (`SET attr = {..}`) — the
+	// only shape that works when the item has no existing map for that attribute yet.
 	merge?: boolean;
 }
 interface ModelBatchGetItemsResponse<T> extends ItemArray<T> {
@@ -705,6 +708,10 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 		const {instance} = table.getInternalProperties(internalProperties);
 		let index = 0;
 		const mergeEnabled = typeof settings === "object" && (settings as ModelUpdateSettings).merge === true;
+		// `merge: false` opts OUT of the default nested-object flatten and replaces the whole
+		// attribute as a map (SET attr = {..}), so a nested-schema Object can be set on an item
+		// whose parent map does not yet exist (a nested-path SET requires the parent to exist).
+		const mergeReplace = typeof settings === "object" && (settings as ModelUpdateSettings).merge === false;
 
 		const isPlainObject = (val: any): boolean => {
 			if (val === null || val === undefined || typeof val !== "object") return false;
@@ -776,7 +783,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 						dynamoType = schema.getAttributeType(subKey, subValue, {"unknownAttributeAllowed": true});
 					} catch (e) {} // eslint-disable-line no-empty
 
-					if (dynamoType === "M" && updateType.name === "$SET" && subValue !== null && typeof subValue === "object"
+					if (!mergeReplace && dynamoType === "M" && updateType.name === "$SET" && subValue !== null && typeof subValue === "object"
 						&& schema.attributes().some((a) => a.startsWith(`${subKey}.`))) {
 						const schemaSettings = {...updateType.objectFromSchemaSettings, "type": "toDynamo", "customTypesDynamo": true, "saveUnknown": true, "mapAttributes": true, "required": false};
 						const processed = (await this.Item.objectFromSchema({[subKey]: subValue}, this, schemaSettings as any))[subKey];
