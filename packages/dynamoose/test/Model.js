@@ -3545,6 +3545,18 @@ describe("Model", () => {
 					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v2": {"S": "Charlie"}});
 				});
 
+				it("Should replace a nested-schema object as a whole map when {merge: false} is passed", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "data": {"type": Object, "schema": {"name": String, "age": Number}}});
+					new dynamoose.Table("User", [User]);
+
+					await callType.func(User).bind(User)({"id": 1}, {"data": {"name": "Charlie", "age": 30}}, {"merge": false});
+					expect(updateItemParams).toBeInstanceOf(Object);
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0 = :v0");
+					expect(updateItemParams.ExpressionAttributeNames).toEqual({"#a0": "data"});
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"M": {"name": {"S": "Charlie"}, "age": {"N": "30"}}}});
+				});
+
 				it("Should merge nested object properties with $SET instead of replacing entire object", async () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", {"id": Number, "data": {"type": Object, "schema": {"name": String, "age": {"type": Number, "required": true}}}});
