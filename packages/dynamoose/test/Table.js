@@ -2260,6 +2260,50 @@ describe("Table", () => {
 				expect(resolvedError).toEqual(error);
 			});
 
+			describe("Retrying ContinuousBackupsUnavailableException", () => {
+				const error = {"name": "ContinuousBackupsUnavailableException"};
+
+				it("Should retry updateContinuousBackups until the backups subsystem is available", async () => {
+					const tableName = "Cat";
+					let failures = 2;
+					updateContinuousBackupsFunction = () => failures-- > 0 ? Promise.reject(error) : Promise.resolve();
+					const model = dynamoose.model(tableName, {"id": String});
+					const table = new dynamoose.Table(tableName, [model], {"pointInTimeRecovery": {"enabled": true}, "update": ["pointInTimeRecovery"], "initialize": false});
+					await table.initialize();
+					expect(updateContinuousBackupsParams.length).toEqual(3);
+				}, 10000);
+
+				it("Should throw after exhausting the retry attempts", async () => {
+					const tableName = "Cat";
+					updateContinuousBackupsFunction = () => Promise.reject(error);
+					const model = dynamoose.model(tableName, {"id": String});
+					const table = new dynamoose.Table(tableName, [model], {"pointInTimeRecovery": {"enabled": true}, "update": ["pointInTimeRecovery"], "initialize": false});
+					let resolvedError;
+					try {
+						await table.initialize();
+					} catch (e) {
+						resolvedError = e;
+					}
+					expect(resolvedError).toEqual(error);
+					expect(updateContinuousBackupsParams.length).toEqual(4);
+				}, 10000);
+
+				it("Should not retry other errors", async () => {
+					const tableName = "Cat";
+					const otherError = {"name": "ValidationException"};
+					updateContinuousBackupsFunction = () => Promise.reject(otherError);
+					const model = dynamoose.model(tableName, {"id": String});
+					const table = new dynamoose.Table(tableName, [model], {"pointInTimeRecovery": {"enabled": true}, "update": ["pointInTimeRecovery"], "initialize": false});
+					let resolvedError;
+					try {
+						await table.initialize();
+					} catch (e) {
+						resolvedError = e;
+					}
+					expect(resolvedError).toEqual(otherError);
+					expect(updateContinuousBackupsParams.length).toEqual(1);
+				});
+			});
 		});
 
 		describe("Time To Live", () => {
