@@ -25,3 +25,4 @@
 - Fixed `Item.attributesWithSchema` throwing `node.forEach is not a function` when an object was supplied for an attribute the schema defines as an array
 - Fixed `Model.update` rejecting partially specified nested attributes at the type level. Update bodies are now typed as `DeepPartial<T>`
 - Fixed the `save` callback being invoked a second time when the supplied callback itself threw an error
+- Fixed a global secondary index whose name is unchanged but whose key schema or projection changed being deleted without being recreated. Such an index was only restored on a later `initialize`, leaving the table without it in between. The delete and the recreate are now emitted in the same reconciliation pass, in that order

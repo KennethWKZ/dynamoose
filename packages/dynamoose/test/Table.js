@@ -1138,6 +1138,76 @@ describe("Table", () => {
 							]);
 						});
 
+						it("Should delete then recreate a modified same-name index in a single reconciliation pass", async () => {
+							const tableName = "Cat";
+							const attributeDefinitions = [
+								{"AttributeName": "id", "AttributeType": "S"},
+								{"AttributeName": "name", "AttributeType": "S"}
+							];
+							// The stale index (projection ALL) and the recreated index (projection INCLUDE ["data"]) share a name.
+							const indexWithStatus = (projection, status) => ({
+								"IndexName": "nameGlobalIndex",
+								"IndexStatus": status,
+								"KeySchema": [{"AttributeName": "name", "KeyType": "HASH"}],
+								"Projection": projection,
+								"ProvisionedThroughput": {"ReadCapacityUnits": 1, "WriteCapacityUnits": 1}
+							});
+							const staleProjection = {"ProjectionType": "ALL"};
+							const freshProjection = {"NonKeyAttributes": ["data"], "ProjectionType": "INCLUDE"};
+							let describeTableFunctionCalledTimes = 0;
+							describeTableFunction = () => {
+								++describeTableFunctionCalledTimes;
+								// waitForActive observes the transition, all within one initialize:
+								// 1 stale ACTIVE (drives the diff) -> 2 DELETING -> 3 gone -> 4 recreated CREATING -> 5+ ACTIVE.
+								let globalSecondaryIndexes;
+								if (describeTableFunctionCalledTimes === 1) {
+									globalSecondaryIndexes = [indexWithStatus(staleProjection, "ACTIVE")];
+								} else if (describeTableFunctionCalledTimes === 2) {
+									globalSecondaryIndexes = [indexWithStatus(staleProjection, "DELETING")];
+								} else if (describeTableFunctionCalledTimes === 3) {
+									globalSecondaryIndexes = [];
+								} else if (describeTableFunctionCalledTimes === 4) {
+									globalSecondaryIndexes = [indexWithStatus(freshProjection, "CREATING")];
+								} else {
+									globalSecondaryIndexes = [indexWithStatus(freshProjection, "ACTIVE")];
+								}
+								return Promise.resolve({
+									"Table": {
+										"ProvisionedThroughput": {"ReadCapacityUnits": 1, "WriteCapacityUnits": 1},
+										"TableStatus": "ACTIVE",
+										"AttributeDefinitions": attributeDefinitions,
+										"GlobalSecondaryIndexes": globalSecondaryIndexes
+									}
+								});
+							};
+							// Same index name, changed projection: ALL -> INCLUDE ["data"].
+							const model = dynamoose.model(tableName, {"id": String, "name": {"type": String, "index": {"type": "global", "project": ["data"]}}, "data": String});
+							new dynamoose.Table(tableName, [model], {"update": updateOption});
+							await model.Model.getInternalProperties(internalProperties).table().getInternalProperties(internalProperties).pendingTaskPromise();
+							await utils.set_immediate_promise();
+							// Single pass emits the delete first, then the recreate with the corrected projection.
+							expect(updateTableParams).toEqual([
+								{
+									"GlobalSecondaryIndexUpdates": [{"Delete": {"IndexName": "nameGlobalIndex"}}],
+									"TableName": "Cat"
+								},
+								{
+									"AttributeDefinitions": attributeDefinitions,
+									"GlobalSecondaryIndexUpdates": [{
+										"Create": {
+											"IndexName": "nameGlobalIndex",
+											"KeySchema": [{"AttributeName": "name", "KeyType": "HASH"}],
+											"Projection": {"NonKeyAttributes": ["data"], "ProjectionType": "INCLUDE"},
+											"ProvisionedThroughput": {"ReadCapacityUnits": 1, "WriteCapacityUnits": 1}
+										}
+									}],
+									"TableName": "Cat"
+								}
+							]);
+							// Reached at least the recreated-index CREATING poll, proving the delete completed before the create.
+							expect(describeTableFunctionCalledTimes).toBeGreaterThanOrEqual(4);
+						});
+
 						it("Should call updateTable to add multiple indexes correctly", async () => {
 							const tableName = "Cat";
 							let describeTableFunctionCalledTimes = 0;
