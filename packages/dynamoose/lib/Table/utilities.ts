@@ -69,6 +69,10 @@ export async function createTableRequest (table: Table): Promise<DynamoDB.Create
 		object.TableClass = DynamoDB.TableClass.STANDARD_INFREQUENT_ACCESS;
 	}
 
+	if (table.getInternalProperties(internalProperties).options.deletionProtection) {
+		object.DeletionProtectionEnabled = true;
+	}
+
 	const tags = getExpectedTags(table);
 	if (tags) {
 		object.Tags = tags;
@@ -131,6 +135,66 @@ export async function updateTimeToLive (table: Table): Promise<void> {
 	/* istanbul ignore next */
 	default:
 		break;
+	}
+}
+// Naming a setting in the `update` array opts into reconciling it in both directions, which for the two
+// settings below includes turning them back off.
+function updateExplicitlyIncludes (table: Table, setting: TableUpdateOptions): boolean {
+	const update = table.getInternalProperties(internalProperties).options.update;
+	return Array.isArray(update) && update.includes(setting);
+}
+// `CreateTable` can not enable point in time recovery, so unlike deletion protection the create path
+// always has to follow up with a dedicated call. `update: true` will only ever turn recovery on.
+export function pointInTimeRecoveryEngaged (table: Table): boolean {
+	const options = table.getInternalProperties(internalProperties).options;
+	return updateExplicitlyIncludes(table, TableUpdateOptions.pointInTimeRecovery) || Boolean((options.create || options.update === true) && options.pointInTimeRecovery.enabled);
+}
+// `update: true` will only ever turn deletion protection on: removing the delete guard from an existing
+// table because the option was left at its default would be a footgun.
+function deletionProtectionEngaged (table: Table): boolean {
+	const options = table.getInternalProperties(internalProperties).options;
+	return updateExplicitlyIncludes(table, TableUpdateOptions.deletionProtection) || Boolean(options.update === true && options.deletionProtection);
+}
+export async function updatePointInTimeRecovery (table: Table): Promise<void> {
+	const instance = table.getInternalProperties(internalProperties).instance;
+	const pointInTimeRecovery = table.getInternalProperties(internalProperties).options.pointInTimeRecovery;
+	const expectedEnabled = Boolean(pointInTimeRecovery.enabled);
+	const expectedPeriod = pointInTimeRecovery.recoveryPeriodInDays;
+
+	let backups: DynamoDB.DescribeContinuousBackupsOutput;
+	// Only the read is guarded. DynamoDB Local does not implement continuous backups at all, so the
+	// describe call is where that shows up. An `UnknownOperationException` thrown by the update itself
+	// is a real failure and must not be swallowed.
+	try {
+		backups = await ddb(instance, "describeContinuousBackups", {
+			"TableName": table.getInternalProperties(internalProperties).name
+		});
+	} catch (error) {
+		if (error.name !== "UnknownOperationException") {
+			throw error;
+		}
+		console.warn(`Point-in-time recovery is not currently supported in DynamoDB Local. Skipping point-in-time recovery update for table: ${table.name}`); // eslint-disable-line no-console
+		return;
+	}
+
+	const description = backups.ContinuousBackupsDescription?.PointInTimeRecoveryDescription;
+	const currentEnabled = description?.PointInTimeRecoveryStatus === "ENABLED";
+	const currentPeriod = description?.RecoveryPeriodInDays;
+
+	const enabledChanged = currentEnabled !== expectedEnabled;
+	const periodChanged = expectedEnabled && typeof expectedPeriod === "number" && expectedPeriod !== currentPeriod;
+
+	if (enabledChanged || periodChanged) {
+		const specification: DynamoDB.PointInTimeRecoverySpecification = {
+			"PointInTimeRecoveryEnabled": expectedEnabled
+		};
+		if (expectedEnabled && typeof expectedPeriod === "number") {
+			specification.RecoveryPeriodInDays = expectedPeriod;
+		}
+		await ddb(instance, "updateContinuousBackups", {
+			"TableName": table.getInternalProperties(internalProperties).name,
+			"PointInTimeRecoverySpecification": specification
+		});
 	}
 }
 export function waitForActive (table: Table, forceRefreshOnFirstAttempt = true) {
@@ -278,6 +342,21 @@ export async function updateTable (table: Table): Promise<void> {
 				await ddb(instance, "updateTable", object);
 				await waitForActive(table)();
 			}
+		}
+	}
+	// Deletion Protection
+	if (deletionProtectionEngaged(table)) {
+		const tableDetails = (await getTableDetails(table)).Table;
+		const expectedDeletionProtection = Boolean(table.getInternalProperties(internalProperties).options.deletionProtection);
+		const currentDeletionProtection = Boolean(tableDetails.DeletionProtectionEnabled);
+
+		if (currentDeletionProtection !== expectedDeletionProtection) {
+			const object: DynamoDB.UpdateTableInput = {
+				"TableName": table.getInternalProperties(internalProperties).name,
+				"DeletionProtectionEnabled": expectedDeletionProtection
+			};
+			await ddb(instance, "updateTable", object);
+			await waitForActive(table)();
 		}
 	}
 }
