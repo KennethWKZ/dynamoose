@@ -69,6 +69,10 @@ export async function createTableRequest (table: Table): Promise<DynamoDB.Create
 		object.TableClass = DynamoDB.TableClass.STANDARD_INFREQUENT_ACCESS;
 	}
 
+	if (table.getInternalProperties(internalProperties).options.deletionProtection) {
+		object.DeletionProtectionEnabled = true;
+	}
+
 	const tags = getExpectedTags(table);
 	if (tags) {
 		object.Tags = tags;
@@ -132,6 +136,18 @@ export async function updateTimeToLive (table: Table): Promise<void> {
 	default:
 		break;
 	}
+}
+// Naming a setting in the `update` array opts into reconciling it in both directions, which for the
+// setting below includes turning it back off.
+function updateExplicitlyIncludes (table: Table, setting: TableUpdateOptions): boolean {
+	const update = table.getInternalProperties(internalProperties).options.update;
+	return Array.isArray(update) && update.includes(setting);
+}
+// `update: true` will only ever turn deletion protection on: removing the delete guard from an existing
+// table because the option was left at its default would be a footgun.
+function deletionProtectionEngaged (table: Table): boolean {
+	const options = table.getInternalProperties(internalProperties).options;
+	return updateExplicitlyIncludes(table, TableUpdateOptions.deletionProtection) || Boolean(options.update === true && options.deletionProtection);
 }
 export function waitForActive (table: Table, forceRefreshOnFirstAttempt = true) {
 	return (): Promise<void> => new Promise((resolve, reject) => {
@@ -278,6 +294,21 @@ export async function updateTable (table: Table): Promise<void> {
 				await ddb(instance, "updateTable", object);
 				await waitForActive(table)();
 			}
+		}
+	}
+	// Deletion Protection
+	if (deletionProtectionEngaged(table)) {
+		const tableDetails = (await getTableDetails(table)).Table;
+		const expectedDeletionProtection = Boolean(table.getInternalProperties(internalProperties).options.deletionProtection);
+		const currentDeletionProtection = Boolean(tableDetails.DeletionProtectionEnabled);
+
+		if (currentDeletionProtection !== expectedDeletionProtection) {
+			const object: DynamoDB.UpdateTableInput = {
+				"TableName": table.getInternalProperties(internalProperties).name,
+				"DeletionProtectionEnabled": expectedDeletionProtection
+			};
+			await ddb(instance, "updateTable", object);
+			await waitForActive(table)();
 		}
 	}
 }

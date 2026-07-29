@@ -7,6 +7,8 @@ const shouldSucceedWithWaitForActiveSetToTrue = new dynamoose.Table("Table", [],
 const shouldSucceedWithTagsSetToObject = new dynamoose.Table("Table", [], {"tags": {"foo": "bar"}});
 const shouldSucceedWithTagsSetToEmptyObject = new dynamoose.Table("Table", [], {"tags": {}});
 
+const shouldSucceedWithDeletionProtection = new dynamoose.Table("Table", [], {"deletionProtection": true});
+
 const shouldAllowForAccessingHashKey = new dynamoose.Table("Table", []).hashKey;
 const shouldAllowForAccessingRangeKey = new dynamoose.Table("Table", []).rangeKey;
 

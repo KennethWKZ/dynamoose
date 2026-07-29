@@ -537,6 +537,33 @@ describe("Table", () => {
 						});
 					});
 
+					it("Should call createTable with correct parameters when deletionProtection is true", async () => {
+						const tableName = "Cat";
+						const model = dynamoose.model(tableName, {"id": String});
+						new instance.Table(tableName, [model], {"deletionProtection": true});
+						await utils.set_immediate_promise();
+						expect(createTableParams).toEqual({
+							"AttributeDefinitions": [{"AttributeName": "id", "AttributeType": "S"}],
+							"KeySchema": [{"AttributeName": "id", "KeyType": "HASH"}],
+							"ProvisionedThroughput": {"ReadCapacityUnits": 1, "WriteCapacityUnits": 1},
+							"TableName": tableName,
+							"DeletionProtectionEnabled": true
+						});
+					});
+
+					it("Should call createTable without DeletionProtectionEnabled when deletionProtection is false", async () => {
+						const tableName = "Cat";
+						const model = dynamoose.model(tableName, {"id": String});
+						new instance.Table(tableName, [model], {"deletionProtection": false});
+						await utils.set_immediate_promise();
+						expect(createTableParams).toEqual({
+							"AttributeDefinitions": [{"AttributeName": "id", "AttributeType": "S"}],
+							"KeySchema": [{"AttributeName": "id", "KeyType": "HASH"}],
+							"ProvisionedThroughput": {"ReadCapacityUnits": 1, "WriteCapacityUnits": 1},
+							"TableName": tableName
+						});
+					});
+
 					it("Shouldn't call createTable if table already exists", async () => {
 						instance.aws.ddb.set({
 							"createTable": (params) => {
@@ -1904,6 +1931,100 @@ describe("Table", () => {
 						expect(updateTableParams).toEqual([]);
 					});
 				});
+			});
+		});
+
+		describe("Deletion Protection", () => {
+			let updateTableParams = [];
+			let describeTableFunction;
+
+			beforeEach(() => {
+				dynamoose.Table.defaults.set({"create": false, "waitForActive": false});
+				updateTableParams = [];
+				describeTableFunction = () => Promise.resolve({
+					"Table": {
+						"ProvisionedThroughput": {"ReadCapacityUnits": 1, "WriteCapacityUnits": 1},
+						"TableStatus": "ACTIVE"
+					}
+				});
+				dynamoose.aws.ddb.set({
+					"describeTable": () => describeTableFunction(),
+					"updateTable": (params) => {
+						updateTableParams.push(params);
+						return Promise.resolve();
+					},
+					"listTagsOfResource": () => Promise.resolve({"Tags": []})
+				});
+			});
+
+			afterEach(() => {
+				dynamoose.aws.ddb.revert();
+			});
+
+			const updateOptions = [true, ["deletionProtection"]];
+
+			updateOptions.forEach((updateOption) => {
+				describe(`{"update": ${JSON.stringify(updateOption)}}`, () => {
+					it("Should call updateTable to enable deletion protection", async () => {
+						const tableName = "Cat";
+						describeTableFunction = () => Promise.resolve({
+							"Table": {
+								"ProvisionedThroughput": {"ReadCapacityUnits": 1, "WriteCapacityUnits": 1},
+								"TableStatus": "ACTIVE",
+								"DeletionProtectionEnabled": false
+							}
+						});
+						const model = dynamoose.model(tableName, {"id": String});
+						new dynamoose.Table(tableName, [model], {"deletionProtection": true, "update": updateOption});
+						await utils.set_immediate_promise();
+						expect(updateTableParams).toEqual([{"TableName": tableName, "DeletionProtectionEnabled": true}]);
+					});
+
+					it("Should not call updateTable when deletion protection already matches", async () => {
+						const tableName = "Cat";
+						describeTableFunction = () => Promise.resolve({
+							"Table": {
+								"ProvisionedThroughput": {"ReadCapacityUnits": 1, "WriteCapacityUnits": 1},
+								"TableStatus": "ACTIVE",
+								"DeletionProtectionEnabled": true
+							}
+						});
+						const model = dynamoose.model(tableName, {"id": String});
+						new dynamoose.Table(tableName, [model], {"deletionProtection": true, "update": updateOption});
+						await utils.set_immediate_promise();
+						expect(updateTableParams).toEqual([]);
+					});
+				});
+			});
+
+			it("Should call updateTable to disable deletion protection when explicitly requested via the update array", async () => {
+				const tableName = "Cat";
+				describeTableFunction = () => Promise.resolve({
+					"Table": {
+						"ProvisionedThroughput": {"ReadCapacityUnits": 1, "WriteCapacityUnits": 1},
+						"TableStatus": "ACTIVE",
+						"DeletionProtectionEnabled": true
+					}
+				});
+				const model = dynamoose.model(tableName, {"id": String});
+				new dynamoose.Table(tableName, [model], {"deletionProtection": false, "update": ["deletionProtection"]});
+				await utils.set_immediate_promise();
+				expect(updateTableParams).toEqual([{"TableName": tableName, "DeletionProtectionEnabled": false}]);
+			});
+
+			it("Should not disable deletion protection for a bare update:true", async () => {
+				const tableName = "Cat";
+				describeTableFunction = () => Promise.resolve({
+					"Table": {
+						"ProvisionedThroughput": {"ReadCapacityUnits": 1, "WriteCapacityUnits": 1},
+						"TableStatus": "ACTIVE",
+						"DeletionProtectionEnabled": true
+					}
+				});
+				const model = dynamoose.model(tableName, {"id": String});
+				new dynamoose.Table(tableName, [model], {"update": true});
+				await utils.set_immediate_promise();
+				expect(updateTableParams).toEqual([]);
 			});
 		});
 
