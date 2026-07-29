@@ -1,21 +1,60 @@
 {
-  "name": "dynamoose",
-  "version": "4.2.0",
-  "description": "Dynamoose is a modeling tool for Amazon's DynamoDB (inspired by Mongoose)",
+  "name": "@kennethwkz/dynamoose",
+  "version": "4.5.3",
+  "description": "Dynamoose is a modeling tool for Amazon's DynamoDB (inspired by Mongoose). Fork of dynamoose with additional fixes and features.",
   "homepage": "https://dynamoosejs.com",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/dynamoose/dynamoose.git"
+    "url": "git+https://github.com/KennethWKZ/dynamoose.git"
+  },
+  "bugs": {
+    "url": "https://github.com/KennethWKZ/dynamoose/issues"
   },
   "author": {
-    "name": "Charlie Fish",
-    "email": "fishcharlie.code@gmail.com",
-    "url": "https://charlie.fish"
+    "name": "Kenneth Wong",
+    "email": "kenneth09062004@gmail.com",
+    "url": "https://github.com/KennethWKZ"
+  },
+  "contributors": [
+    {
+      "name": "Charlie Fish",
+      "email": "fishcharlie.code@gmail.com",
+      "url": "https://charlie.fish"
+    }
+  ],
+  "keywords": [
+    "dynamodb",
+    "dynamo",
+    "mongoose",
+    "aws",
+    "amazon",
+    "document",
+    "model",
+    "schema",
+    "database",
+    "data",
+    "datastore",
+    "query",
+    "scan",
+    "nosql",
+    "db",
+    "store",
+    "document store",
+    "table",
+    "json",
+    "object",
+    "storage"
+  ],
+  "engines": {
+    "node": ">=16.0.0"
   },
   "scripts": {
     "build": "tsc",

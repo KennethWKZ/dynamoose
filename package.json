@@ -96,5 +96,9 @@
       "type": "opencollective",
       "url": "https://opencollective.com/dynamoose"
     }
-  ]
+  ],
+  "allowScripts": {
+    "fsevents@2.3.3": true,
+    "nx@22.7.6": true
+  }
 }
