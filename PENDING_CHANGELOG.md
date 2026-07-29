@@ -11,6 +11,7 @@
 - Added support for enabling and configuring DynamoDB Streams through Table options
 - Added a `merge` setting to `Model.update`. Passing `{"merge": true}` updates a nested object in place by writing each provided property to its own document path (`SET attr.sub = :v`), matching how a nested attribute update is expressed against DynamoDB directly, instead of replacing the whole attribute as a map. The default behavior is unchanged
 - Added support for enabling table deletion protection through the `deletionProtection` Table option. It is applied on create, and on update it can only be turned on; turning it back off requires `update` to explicitly include `deletionProtection`
+- Added support for enabling point-in-time recovery through the `pointInTimeRecovery` Table option, including configuring the recovery window with `pointInTimeRecovery.recoveryPeriodInDays`. As with deletion protection, `update: true` can only turn recovery on; turning it back off requires `update` to explicitly include `pointInTimeRecovery`
 
 ### Performance
 

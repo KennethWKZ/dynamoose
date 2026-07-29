@@ -13,6 +13,8 @@ async function main (instance: Instance, method: "describeTimeToLive", params: D
 async function main (instance: Instance, method: "listTagsOfResource", params: DynamoDB.ListTagsOfResourceCommandInput): Promise<DynamoDB.ListTagsOfResourceCommandOutput>;
 async function main (instance: Instance, method: "tagResource", params: DynamoDB.TagResourceCommandInput): Promise<DynamoDB.TagResourceCommandOutput>;
 async function main (instance: Instance, method: "untagResource", params: DynamoDB.UntagResourceCommandInput): Promise<DynamoDB.UntagResourceCommandOutput>;
+async function main (instance: Instance, method: "describeContinuousBackups", params: DynamoDB.DescribeContinuousBackupsCommandInput): Promise<DynamoDB.DescribeContinuousBackupsCommandOutput>;
+async function main (instance: Instance, method: "updateContinuousBackups", params: DynamoDB.UpdateContinuousBackupsCommandInput): Promise<DynamoDB.UpdateContinuousBackupsCommandOutput>;
 
 // Item
 async function main (instance: Instance, method: "getItem", params: DynamoDB.GetItemInput): Promise<DynamoDB.GetItemOutput>;

@@ -8,6 +8,8 @@ const shouldSucceedWithTagsSetToObject = new dynamoose.Table("Table", [], {"tags
 const shouldSucceedWithTagsSetToEmptyObject = new dynamoose.Table("Table", [], {"tags": {}});
 
 const shouldSucceedWithDeletionProtection = new dynamoose.Table("Table", [], {"deletionProtection": true});
+const shouldSucceedWithPointInTimeRecovery = new dynamoose.Table("Table", [], {"pointInTimeRecovery": {"enabled": true}});
+const shouldSucceedWithPointInTimeRecoveryPeriod = new dynamoose.Table("Table", [], {"pointInTimeRecovery": {"enabled": true, "recoveryPeriodInDays": 7}});
 
 const shouldAllowForAccessingHashKey = new dynamoose.Table("Table", []).hashKey;
 const shouldAllowForAccessingRangeKey = new dynamoose.Table("Table", []).rangeKey;
