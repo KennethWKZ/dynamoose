@@ -42,8 +42,6 @@
 
 Dynamoose is a modeling tool for Amazon's DynamoDB (inspired by [Mongoose](https://mongoosejs.com/)).
 
-<iframe width="560" height="315" src="https://www.youtube-nocookie.com/embed/dkV5GVjsQBE" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
-
 ### Getting Started
 
 <!-- start-block:a1507dd3-6aff-4885-a9fd-14d46a4b7743 -->
