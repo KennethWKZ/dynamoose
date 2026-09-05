@@ -1,6 +1,6 @@
 {
   "name": "@kennethwkz/dynamoose",
-  "version": "4.6.1",
+  "version": "4.6.2",
   "description": "Dynamoose is a modeling tool for Amazon's DynamoDB (inspired by Mongoose). Fork of dynamoose with additional fixes and features.",
   "homepage": "https://dynamoosejs.com",
   "main": "dist/index.js",
