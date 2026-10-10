@@ -36,3 +36,7 @@
 - Fixed `Model.batchGet` silently leaving out items whose key attribute has a `get` function. Requested keys were matched against the item after its `get` functions ran, so a key stored as `user#1` and returned as `1` never matched; keys are now matched against the item as DynamoDB returned it
 - Fixed `Model.batchGet` silently leaving out items, and unprocessed keys, whose key is a `Buffer`. Key values were compared with `===`, which is never true for two `Buffer` instances; they are now compared by content
 - Fixed `Date` and `Buffer` key values in `Model.get`, `Model.batchGet`, `Model.delete`, `Model.batchDelete`, `Model.update` and the `Model.transaction` methods. A `Date` or `Buffer` passed as the hash key sent an empty `Key` to DynamoDB, and a `Date` inside a key object threw `Unsupported type passed`. `Date` key values are now converted using the attribute's `storage` setting before the attribute's `set` function runs, the same as when saving an item (previously a key's `set` function received the `Date` itself), and the key types accept `Date` and `Buffer` values. `Model.batchDelete` also now reports unprocessed items whose key is a `Buffer`; key values were compared with `===`, which is never true for two `Buffer` instances
+
+### Other
+
+- Fixed intermittent CI failures in timing-based tests. Timestamp tests now check that the value falls between the time before and after the call instead of within 10ms of a single reading, and the `Scan`/`Query` `all` delay and `Table` TTL wait tests allow for timers firing about 1ms early

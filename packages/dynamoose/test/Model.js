@@ -2182,34 +2182,36 @@ describe("Model", () => {
 					createItemFunction = () => Promise.resolve();
 					User = dynamoose.model("User", new dynamoose.Schema({"id": Number, "name": String}, {"timestamps": true}));
 					new dynamoose.Table("User", [User]);
-					const date1 = Date.now();
+					const before1 = Date.now();
 					const obj = {"id": 1, "name": "Charlie"};
 					const result = await callType.func(User).bind(User)(obj);
+					const after1 = Date.now();
 
 					// Check original timestamps
 					expect(result.id).toEqual(1);
 					expect(result.name).toEqual("Charlie");
 					expect(result.createdAt).toBeInstanceOf(Date);
-					expect(result.createdAt.getTime()).toBeWithinRange(date1 - 10, date1 + 10);
+					expect(result.createdAt.getTime()).toBeWithinRange(before1, after1);
 					expect(result.updatedAt).toBeInstanceOf(Date);
-					expect(result.updatedAt.getTime()).toBeWithinRange(date1 - 10, date1 + 10);
+					expect(result.updatedAt.getTime()).toBeWithinRange(before1, after1);
 
 					await new Promise((resolve) => setTimeout(resolve, 20));
 
-					const date2 = Date.now();
+					const before2 = Date.now();
 
 					// Mutate document and re-save
 					result.name = "Charlie 2";
 					const result2 = await result.save();
+					const after2 = Date.now();
 
 					expect(result.toJSON()).toEqual(result2.toJSON());
 					[result, result2].forEach((r) => {
 						expect(r.id).toEqual(1);
 						expect(r.name).toEqual("Charlie 2");
 						expect(r.createdAt).toBeInstanceOf(Date);
-						expect(r.createdAt.getTime()).toBeWithinRange(date1 - 10, date1 + 10);
+						expect(r.createdAt.getTime()).toBeWithinRange(before1, after1);
 						expect(r.updatedAt).toBeInstanceOf(Date);
-						expect(r.updatedAt.getTime()).toBeWithinRange(date2 - 10, date2 + 10);
+						expect(r.updatedAt.getTime()).toBeWithinRange(before2, after2);
 					});
 				});
 			});
@@ -3339,8 +3341,9 @@ describe("Model", () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", new dynamoose.Schema({"id": Number, "name": String}, {"timestamps": true}));
 					new dynamoose.Table("User", [User]);
-					const date = Date.now();
+					const before = Date.now();
 					await callType.func(User).bind(User)({"id": 1}, {"name": "Charlie"});
+					const after = Date.now();
 					expect(updateItemParams).toBeInstanceOf(Object);
 					expect(updateItemParams).toEqual({
 						"ExpressionAttributeNames": {
@@ -3364,15 +3367,16 @@ describe("Model", () => {
 						"TableName": "User",
 						"ReturnValues": "ALL_NEW"
 					});
-					expect(parseInt(updateItemParams.ExpressionAttributeValues[":v0"].N)).toBeWithinRange(date - 10, date + 10);
+					expect(parseInt(updateItemParams.ExpressionAttributeValues[":v0"].N)).toBeWithinRange(before, after);
 				});
 
 				it("Should send correct params to updateItem for timestamps with updateAt with custom parameter names", async () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", new dynamoose.Schema({"id": Number, "name": String}, {"timestamps": {"createdAt": "created", "updatedAt": "updated"}}));
 					new dynamoose.Table("User", [User]);
-					const date = Date.now();
+					const before = Date.now();
 					await callType.func(User).bind(User)({"id": 1}, {"name": "Charlie"});
+					const after = Date.now();
 					expect(updateItemParams).toBeInstanceOf(Object);
 					expect(updateItemParams).toEqual({
 						"ExpressionAttributeNames": {
@@ -3396,15 +3400,16 @@ describe("Model", () => {
 						"TableName": "User",
 						"ReturnValues": "ALL_NEW"
 					});
-					expect(parseInt(updateItemParams.ExpressionAttributeValues[":v0"].N)).toBeWithinRange(date - 10, date + 10);
+					expect(parseInt(updateItemParams.ExpressionAttributeValues[":v0"].N)).toBeWithinRange(before, after);
 				});
 
 				it("Should send correct params to updateItem for timestamps with updateAt with multiple custom parameter names", async () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", new dynamoose.Schema({"id": Number, "name": String}, {"timestamps": {"createdAt": ["a1", "a2"], "updatedAt": ["b1", "b2"]}}));
 					new dynamoose.Table("User", [User]);
-					const date = Date.now();
+					const before = Date.now();
 					await callType.func(User).bind(User)({"id": 1}, {"name": "Charlie"});
+					const after = Date.now();
 					expect(updateItemParams).toBeInstanceOf(Object);
 					expect(updateItemParams).toEqual({
 						"ExpressionAttributeNames": {
@@ -3432,8 +3437,8 @@ describe("Model", () => {
 						"TableName": "User",
 						"ReturnValues": "ALL_NEW"
 					});
-					expect(parseInt(updateItemParams.ExpressionAttributeValues[":v0"].N)).toBeWithinRange(date - 10, date + 10);
-					expect(parseInt(updateItemParams.ExpressionAttributeValues[":v1"].N)).toBeWithinRange(date - 10, date + 10);
+					expect(parseInt(updateItemParams.ExpressionAttributeValues[":v0"].N)).toBeWithinRange(before, after);
+					expect(parseInt(updateItemParams.ExpressionAttributeValues[":v1"].N)).toBeWithinRange(before, after);
 					expect(parseInt(updateItemParams.ExpressionAttributeValues[":v0"].N)).toEqual(parseInt(updateItemParams.ExpressionAttributeValues[":v1"].N));
 				});
 
