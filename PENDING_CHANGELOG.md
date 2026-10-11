@@ -43,3 +43,4 @@
 ### Other
 
 - Fixed intermittent CI failures in timing-based tests. Timestamp tests now check that the value falls between the time before and after the call instead of within 10ms of a single reading, and the `Scan`/`Query` `all` delay and `Table` TTL wait tests allow for timers firing about 1ms early
+- Fixed the `Table` constructor's `models` parameter type, which accepted any `Model`. It is now typed as the models `dynamoose.model` returns, so passing a value the constructor rejects at runtime (such as `User.Model`) is a type error instead of a runtime error
