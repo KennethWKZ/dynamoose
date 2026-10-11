@@ -6,7 +6,7 @@ import {Model} from "../Model";
 import {custom as customDefaults, original as originalDefaults} from "./defaults";
 import utils from "../utils";
 import * as DynamoDB from "@aws-sdk/client-dynamodb";
-import {IndexItem, TableIndex} from "../Schema";
+import {IndexItem, Schema, TableIndex} from "../Schema";
 import {Item as ItemCarrier} from "../Item";
 import {createTable, createTableRequest, pointInTimeRecoveryEngaged, updatePointInTimeRecovery, updateTable, updateTimeToLive, waitForActive} from "./utilities";
 import {TableClass} from "./types";
@@ -38,15 +38,15 @@ interface TableInternalProperties {
 
 // This class represents a single DynamoDB table
 /**
- * Injects a table's TTL (`expires`) attribute into the given models' schemas. Dynamoose only persists
- * attributes its schema knows about, so a schema that never receives this injection silently drops the
- * TTL attribute on every write while DynamoDB keeps reporting `TimeToLiveStatus: ENABLED`.
+ * Injects a table's TTL (`expires`) attribute into the given schemas. Dynamoose persists only the
+ * attributes a schema knows about, so a schema that never receives this injection silently drops the TTL
+ * attribute on every write while DynamoDB keeps reporting `TimeToLiveStatus: ENABLED`.
  *
- * Called both from the `Table` constructor and, for a model registered against an already-constructed
- * table, from `Model`'s attach path.
+ * Called from the `Table` constructor and, for a model registered against an already-constructed table,
+ * from `Model`'s attach path.
  */
-export function applyExpiresToSchemas (models: any[], expires: TableExpiresSettings): void {
-	utils.array_flatten(models.map((model: any) => model.Model.getInternalProperties(internalProperties).schemas)).forEach((schema) => {
+export function applyExpiresToSchemas (schemas: Schema[], expires: TableExpiresSettings): void {
+	schemas.forEach((schema) => {
 		// `setSchemaAttribute` also invalidates the schema's memoization caches, which would otherwise keep
 		// serving a stale attribute view that omits this attribute.
 		schema.getInternalProperties(internalProperties).setSchemaAttribute(expires.attribute, {
@@ -322,7 +322,7 @@ export class Table extends InternalPropertiesClass<TableInternalProperties> {
 			}
 			options.expires = utils.combine_objects(options.expires as any, {"attribute": "ttl"});
 
-			applyExpiresToSchemas(models, options.expires as TableExpiresSettings);
+			applyExpiresToSchemas(utils.array_flatten(models.map((model: any) => model.Model.getInternalProperties(internalProperties).schemas)), options.expires as TableExpiresSettings);
 		}
 
 		if (options.initialize === undefined || options.initialize === true) {
