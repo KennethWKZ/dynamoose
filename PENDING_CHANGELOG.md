@@ -22,6 +22,7 @@
 ### Bug Fixes
 
 - Fixed `deep_copy` dropping sibling properties that share the same object reference (e.g. a single `Date` used for both `createdAt` and `updatedAt`, or a single address used for both `billingAddress` and `shippingAddress`). Circular reference detection now tracks only the current ancestor path rather than every object ever visited, which also removes an infinite-recursion risk on self-referencing arrays and a shared-reference leak on class instances containing circular properties
+- Fixed `query.consistent()`, `scan.consistent()`, `query.count()` and `scan.count()` ignoring their argument and flipping the setting on every call, so `consistent(false)` sent `ConsistentRead: true` and calling a method twice turned the setting off. They now take an optional boolean, and calling them without one turns the setting on
 - Fixed `Model.update` corrupting arrays, Sets, and Buffers nested inside a map attribute. These values were traversed as if they were nested maps, which produced document paths keyed by array indices or byte offsets, and silently dropped Sets from the update entirely
 - Fixed `Item.attributesWithSchema` throwing `node.forEach is not a function` when an object was supplied for an attribute the schema defines as an array
 - Fixed `Model.update` rejecting partially specified nested attributes at the type level. Update bodies are now typed as `DeepPartial<T>`
