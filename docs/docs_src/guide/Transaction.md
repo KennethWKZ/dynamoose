@@ -17,6 +17,7 @@ You can also pass in an object for the optional `settings` parameter that is an 
 | return | What the function should return. Can be `items`, or `request`. In the event this is set to `request` the request Dynamoose will make to DynamoDB will be returned, and no request to DynamoDB will be made. | String | `items` |
 | type | If Dynamoose should use `get` (`transactGetItems`) or `write` (`transactWriteItems`) to make the transaction call. | String (`get` \| `write`) | By default, if all `transactions` objects are `Get`, `get` will be run, otherwise `write` will be used. |
 | returnItems | If a `write` transaction should resolve with the written items. See [Returning written items](#returning-written-items). Can't be used when `return` is set to `request`. | Boolean | `false` |
+| returnValuesOnConditionCheckFailure | Set to `ALL_OLD` to get the stored item of a request whose condition fails. See [Getting the stored item when a condition fails](#getting-the-stored-item-when-a-condition-fails). | String (`ALL_OLD` \| `NONE`) | DynamoDB's default, `NONE` |
 
 ```js
 await dynamoose.transaction([
@@ -40,3 +41,7 @@ await dynamoose.transaction([
 ## Returning written items
 
 dyno_jsdoc_dist/Transaction.d.ts|transactionSettings.returnItems
+
+## Getting the stored item when a condition fails
+
+dyno_jsdoc_dist/Transaction.d.ts|transactionSettings.returnValuesOnConditionCheckFailure

@@ -648,6 +648,108 @@ describe("Transaction", () => {
 					expect(getParams).toEqual([]);
 				});
 			});
+
+			describe("returnValuesOnConditionCheckFailure", () => {
+				const canceledError = (reasons) => Object.assign(new Error("Transaction cancelled, please refer cancellation reasons for specific reasons [None, ConditionalCheckFailed]"), {"name": "TransactionCanceledException", "CancellationReasons": reasons});
+				let writeParams;
+				const mockAWS = (result) => {
+					writeParams = [];
+					dynamoose.aws.ddb.set({
+						"transactWriteItems": (params) => {
+							writeParams.push(params);
+							return result instanceof Error ? Promise.reject(result) : Promise.resolve(result);
+						}
+					});
+				};
+
+				it("Should add it to each write request that has a condition", async () => {
+					const User = dynamoose.model("User", {"id": Number, "name": String});
+					new dynamoose.Table("Table", [User]);
+					const request = await callType.func(dynamoose.transaction)([
+						User.transaction.create({"id": 1, "name": "Bob"}),
+						User.transaction.update({"id": 2}, {"name": "Tim"}),
+						User.transaction.update({"id": 3}, {"name": "Tom"}, {"condition": new dynamoose.Condition("name").eq("Tim")}),
+						User.transaction.delete({"id": 4}, {"condition": new dynamoose.Condition("name").exists()}),
+						User.transaction.condition({"id": 5}, new dynamoose.Condition("name").exists()),
+						{"Delete": {"TableName": "Table", "Key": {"id": {"N": "6"}}, "ConditionExpression": "attribute_exists(#a0)", "ExpressionAttributeNames": {"#a0": "id"}, "ReturnValuesOnConditionCheckFailure": "NONE"}}
+					], {"return": "request", "returnValuesOnConditionCheckFailure": "ALL_OLD"});
+					expect(request.TransactItems.map((item) => Object.values(item)[0].ReturnValuesOnConditionCheckFailure)).toEqual(["ALL_OLD", undefined, "ALL_OLD", "ALL_OLD", "ALL_OLD", "NONE"]);
+				});
+
+				it("Should not change the requests passed in", async () => {
+					mockAWS({});
+					const User = dynamoose.model("User", {"id": Number, "name": String});
+					new dynamoose.Table("Table", [User]);
+					const create = await User.transaction.create({"id": 1, "name": "Bob"});
+					await callType.func(dynamoose.transaction)([create], {"returnValuesOnConditionCheckFailure": "ALL_OLD"});
+					expect(create.Put.ReturnValuesOnConditionCheckFailure).toEqual(undefined);
+					expect(writeParams[0].TransactItems[0].Put.ReturnValuesOnConditionCheckFailure).toEqual("ALL_OLD");
+				});
+
+				it("Should not add it without the setting", async () => {
+					const User = dynamoose.model("User", {"id": Number, "name": String});
+					new dynamoose.Table("Table", [User]);
+					const request = await callType.func(dynamoose.transaction)([User.transaction.create({"id": 1, "name": "Bob"})], {"return": "request"});
+					expect(Object.keys(request.TransactItems[0].Put)).not.toContain("ReturnValuesOnConditionCheckFailure");
+				});
+
+				it("Should throw an error for an invalid value", () => {
+					const User = dynamoose.model("User", {"id": Number, "name": String});
+					new dynamoose.Table("Table", [User]);
+					return expect(callType.func(dynamoose.transaction)([User.transaction.create({"id": 1, "name": "Bob"})], {"returnValuesOnConditionCheckFailure": "ALL_NEW"})).rejects.toEqual(new CustomError.InvalidParameter("Invalid returnValuesOnConditionCheckFailure option, please pass in \"ALL_OLD\" or \"NONE\"."));
+				});
+
+				it("Should add the stored items to the error when a condition fails", async () => {
+					const error = canceledError([{"Code": "None"}, {"Code": "ConditionalCheckFailed", "Message": "The conditional request failed", "Item": {"id": {"N": "2"}, "name": {"S": "tim"}}}]);
+					mockAWS(error);
+					const User = dynamoose.model("User", {"id": Number, "name": {"type": String, "get": (value) => value.toUpperCase()}});
+					new dynamoose.Table("Table", [User]);
+					const result = await callType.func(dynamoose.transaction)([
+						User.transaction.create({"id": 1, "name": "Bob"}),
+						User.transaction.update({"id": 2}, {"name": "Tom"}, {"condition": new dynamoose.Condition("name").eq("bob")})
+					], {"returnValuesOnConditionCheckFailure": "ALL_OLD"}).catch((e) => e);
+					expect(result).toBe(error);
+					expect(result.name).toEqual("TransactionCanceledException");
+					expect(result.CancellationReasons[1].Item).toEqual({"id": {"N": "2"}, "name": {"S": "tim"}});
+					expect(result.conditionCheckFailureItems.length).toEqual(2);
+					expect(result.conditionCheckFailureItems[0]).toEqual(undefined);
+					expect(result.conditionCheckFailureItems[1].constructor.name).toEqual("User");
+					expect(result.conditionCheckFailureItems[1].toJSON()).toEqual({"id": 2, "name": "TIM"});
+				});
+
+				it("Should add the stored items for a stored item returned for a request built without the setting", async () => {
+					const error = canceledError([{"Code": "ConditionalCheckFailed", "Item": {"id": {"N": "1"}, "name": {"S": "Bob"}}}]);
+					mockAWS(error);
+					const User = dynamoose.model("User", {"id": Number, "name": String});
+					new dynamoose.Table("Table", [User]);
+					const request = await User.transaction.create({"id": 1, "name": "Bob"});
+					request.Put.ReturnValuesOnConditionCheckFailure = "ALL_OLD";
+					const result = await callType.func(dynamoose.transaction)([request]).catch((e) => e);
+					expect(result.conditionCheckFailureItems.map((item) => item.toJSON())).toEqual([{"id": 1, "name": "Bob"}]);
+				});
+
+				it("Should throw the original error unchanged if a stored item can't be converted", async () => {
+					const error = canceledError([{"Code": "ConditionalCheckFailed", "Item": {"id": {"N": "1"}, "name": {"S": "Bob"}}}]);
+					mockAWS(error);
+					const User = dynamoose.model("User", {"id": Number, "name": {"type": String, "get": () => {
+						throw new Error("get failed");
+					}}});
+					new dynamoose.Table("Table", [User]);
+					const result = await callType.func(dynamoose.transaction)([User.transaction.create({"id": 1, "name": "Bob"})], {"returnValuesOnConditionCheckFailure": "ALL_OLD"}).catch((e) => e);
+					expect(result).toBe(error);
+					expect(Object.keys(result)).not.toContain("conditionCheckFailureItems");
+				});
+
+				it("Should throw other errors unchanged", async () => {
+					const error = Object.assign(new Error("Throughput exceeded"), {"name": "ProvisionedThroughputExceededException"});
+					mockAWS(error);
+					const User = dynamoose.model("User", {"id": Number, "name": String});
+					new dynamoose.Table("Table", [User]);
+					const result = await callType.func(dynamoose.transaction)([User.transaction.create({"id": 1, "name": "Bob"})], {"returnValuesOnConditionCheckFailure": "ALL_OLD"}).catch((e) => e);
+					expect(result).toBe(error);
+					expect(Object.keys(result)).not.toContain("conditionCheckFailureItems");
+				});
+			});
 		});
 	});
 });
