@@ -2068,4 +2068,106 @@ describe("Query", () => {
 			expect(result.lastKey).not.toBeDefined();
 		});
 	});
+
+	describe("Raw conditions", () => {
+		let RangeModel;
+		beforeEach(() => {
+			queryPromiseResolver = () => ({"Items": []});
+			RangeModel = dynamoose.model("Dog", {
+				"id": {"type": Number, "hashKey": true},
+				"name": {"type": String, "rangeKey": true},
+				"age": {"type": Number, "index": {"name": "ageLSI", "type": "local"}},
+				"owner": {"type": String, "index": {"name": "ownerGSI", "type": "global", "rangeKey": "age"}},
+				"color": String
+			});
+			new dynamoose.Table("Dog", [RangeModel]);
+		});
+		const raw = (expression, names, values, key = "FilterExpression") => new dynamoose.Condition({[key]: expression, "ExpressionAttributeNames": names, "ExpressionAttributeValues": values});
+
+		["FilterExpression", "ConditionExpression"].forEach((key) => {
+			it(`Should move the hash key condition of a raw ${key} to the KeyConditionExpression`, async () => {
+				await Model.query(raw("#id = :id", {"#id": "id"}, {":id": 1}, key)).exec();
+				expect(queryParams).toEqual({
+					"TableName": "Cat",
+					"KeyConditionExpression": "#id = :id",
+					"ExpressionAttributeNames": {"#id": "id"},
+					"ExpressionAttributeValues": {":id": {"N": "1"}}
+				});
+			});
+		});
+
+		it("Should keep the other conditions in the FilterExpression", async () => {
+			await Model.query(raw("#id = :id AND #fn > :fn", {"#id": "id", "#fn": "favoriteNumber"}, {":id": 1, ":fn": 5})).exec();
+			expect(queryParams).toEqual({
+				"TableName": "Cat",
+				"KeyConditionExpression": "#id = :id",
+				"FilterExpression": "#fn > :fn",
+				"ExpressionAttributeNames": {"#id": "id", "#fn": "favoriteNumber"},
+				"ExpressionAttributeValues": {":id": {"N": "1"}, ":fn": {"N": "5"}}
+			});
+		});
+
+		it("Should use the global index whose hash key the raw condition sets", async () => {
+			await Model.query(raw("#n = :n", {"#n": "name"}, {":n": "Charlie"})).exec();
+			expect(queryParams.IndexName).toEqual("nameGlobalIndex");
+			expect(queryParams.KeyConditionExpression).toEqual("#n = :n");
+			expect(queryParams.FilterExpression).toBeUndefined();
+		});
+
+		it("Should move a BETWEEN range key condition, with the hash key first", async () => {
+			await RangeModel.query(raw("#name BETWEEN :a AND :b AND #id = :id", {"#id": "id", "#name": "name"}, {":id": 1, ":a": "a", ":b": "m"})).exec();
+			expect(queryParams.KeyConditionExpression).toEqual("#id = :id AND #name BETWEEN :a AND :b");
+			expect(queryParams.FilterExpression).toBeUndefined();
+			expect(queryParams.IndexName).toBeUndefined();
+		});
+
+		it("Should move a begins_with range key condition", async () => {
+			await RangeModel.query(raw("begins_with(#name, :p) and #id = :id and #c = :c", {"#id": "id", "#name": "name", "#c": "color"}, {":id": 1, ":p": "Ch", ":c": "red"})).exec();
+			expect(queryParams.KeyConditionExpression).toEqual("#id = :id AND begins_with(#name, :p)");
+			expect(queryParams.FilterExpression).toEqual("#c = :c");
+		});
+
+		it("Should pick the index with the longest range key match", async () => {
+			await RangeModel.query(raw("#id = :id AND #age >= :age", {"#id": "id", "#age": "age"}, {":id": 1, ":age": 3})).exec();
+			expect(queryParams.IndexName).toEqual("ageLSI");
+			expect(queryParams.KeyConditionExpression).toEqual("#id = :id AND #age >= :age");
+			expect(queryParams.FilterExpression).toBeUndefined();
+		});
+
+		it("Should use the index passed to using", async () => {
+			await RangeModel.query(raw("#o = :o AND #age < :age AND #c = :c", {"#o": "owner", "#age": "age", "#c": "color"}, {":o": "Tim", ":age": 9, ":c": "red"})).using("ownerGSI").exec();
+			expect(queryParams.IndexName).toEqual("ownerGSI");
+			expect(queryParams.KeyConditionExpression).toEqual("#o = :o AND #age < :age");
+			expect(queryParams.FilterExpression).toEqual("#c = :c");
+		});
+
+		it("Should keep a parenthesized group in the FilterExpression", async () => {
+			await Model.query(raw("(#id = :id) AND (#fn = :a OR #fn = :b)", {"#id": "id", "#fn": "favoriteNumber"}, {":id": 1, ":a": 1, ":b": 2})).exec();
+			expect(queryParams.KeyConditionExpression).toEqual("#id = :id");
+			expect(queryParams.FilterExpression).toEqual("(#fn = :a OR #fn = :b)");
+		});
+
+		it("Should throw for a second condition on a key attribute", async () => {
+			await expect(RangeModel.query(raw("#id = :id AND #name >= :a AND #name <= :b", {"#id": "id", "#name": "name"}, {":id": 1, ":a": "a", ":b": "m"})).exec()).rejects.toEqual(new CustomError.InvalidParameter("A query can have only one condition on the key attribute \"name\", but the raw condition has \"#name <= :b\" as well. Combine them, for example with BETWEEN."));
+		});
+
+		it("Should accept attribute names without placeholders", async () => {
+			await Model.query(new dynamoose.Condition({"FilterExpression": "id = :id AND #fn > :fn", "ExpressionAttributeNames": {"#fn": "favoriteNumber"}, "ExpressionAttributeValues": {":id": 1, ":fn": 5}})).exec();
+			expect(queryParams.KeyConditionExpression).toEqual("id = :id");
+			expect(queryParams.FilterExpression).toEqual("#fn > :fn");
+		});
+
+		it("Should not move a hash key condition that isn't an equality", async () => {
+			await expect(Model.query(raw("#id > :id", {"#id": "id"}, {":id": 1})).exec()).rejects.toEqual(new CustomError.InvalidParameter("Index can't be found for query."));
+		});
+
+		it("Should not split an expression joined with OR", async () => {
+			await expect(Model.query(raw("#id = :id OR #fn = :fn", {"#id": "id", "#fn": "favoriteNumber"}, {":id": 1, ":fn": 5})).exec()).rejects.toEqual(new CustomError.InvalidParameter("Index can't be found for query."));
+		});
+
+		it("Should not change the scan request for a raw condition", async () => {
+			const request = await Model.scan(raw("#id = :id", {"#id": "id"}, {":id": 1})).getRequest();
+			expect(request).toEqual({"TableName": "Cat", "FilterExpression": "#id = :id", "ExpressionAttributeNames": {"#id": "id"}, "ExpressionAttributeValues": {":id": {"N": "1"}}});
+		});
+	});
 });

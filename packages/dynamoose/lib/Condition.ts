@@ -10,7 +10,13 @@ import {Model} from "./Model";
 import {InternalPropertiesClass} from "./InternalPropertiesClass";
 const {internalProperties} = Internal.General;
 
-const isRawConditionObject = (object): boolean => Object.keys(object).length === 3 && ["ExpressionAttributeValues", "ExpressionAttributeNames"].every((item) => Boolean(object[item]) && typeof object[item] === "object");
+// A raw object has an expression, `ExpressionAttributeNames` and, unless the expression uses no values (`attribute_exists(#a)`), `ExpressionAttributeValues`.
+const isRawConditionObject = (object): boolean => {
+	const isObject = (value): boolean => Boolean(value) && typeof value === "object";
+	const hasValues = "ExpressionAttributeValues" in object;
+	return Object.keys(object).length === (hasValues ? 3 : 2) && isObject(object.ExpressionAttributeNames) && (!hasValues || isObject(object.ExpressionAttributeValues));
+};
+const rawConditionExpressionKeys = ["ConditionExpression", "FilterExpression"];
 
 export type ConditionFunction = (condition: Condition) => Condition;
 // TODO: There is a problem where you can have multiple keys in one `ConditionStorageType`, which will cause problems. We need to fix that. Likely be refactoring it so that the key is part of `ConditionsConditionStorageObject`.
@@ -153,15 +159,33 @@ export class Condition extends InternalPropertiesClass<ConditionInternalProperti
 					return Item.objectToDynamo(newValue, {"type": "value"});
 				};
 
-				if (this.getInternalProperties(internalProperties).settings.raw && utils.object.equals(Object.keys(this.getInternalProperties(internalProperties).settings.raw).sort(), [settings.conditionString, "ExpressionAttributeValues", "ExpressionAttributeNames"].sort())) {
-					return utils.async_reduce(Object.entries((this.getInternalProperties(internalProperties).settings.raw as ObjectType).ExpressionAttributeValues), async (obj, entry) => {
+				const {raw} = this.getInternalProperties(internalProperties).settings;
+				if (raw && typeof raw === "object" && isRawConditionObject(raw)) {
+					const [expressionKey] = Object.keys(raw).filter((key) => key !== "ExpressionAttributeNames" && key !== "ExpressionAttributeValues");
+					// A condition expression and a filter expression have the same syntax, so either one is used for whichever the request needs. Any other key would leave the request without the condition.
+					if (!rawConditionExpressionKeys.includes(expressionKey)) {
+						throw new CustomError.InvalidParameter(`A raw condition object must have a "ConditionExpression" or "FilterExpression" property, but it has "${expressionKey}".`);
+					}
+					// Builds a new object, because callers merge their own names and values into the result.
+					const {ExpressionAttributeNames, ExpressionAttributeValues} = raw as ObjectType;
+					// A caller numbers its own names and values (`#a0`, `:v0`) from the index, so it starts after the raw condition's, and neither replaces the other.
+					if (settings.index) {
+						const usedIndexes = [...Object.keys(ExpressionAttributeNames || {}), ...Object.keys(ExpressionAttributeValues || {})].map((key) => (/^(?:#a|:v)(\d+)$/).exec(key)).filter(Boolean).map((match) => parseInt(match[1]) + 1);
+						settings.index.set(Math.max(settings.index.start || 0, ...usedIndexes));
+					}
+					return utils.async_reduce(Object.entries(ExpressionAttributeValues || {}), async (obj, entry) => {
 						const [key, value] = entry;
 						// TODO: we should fix this so that we can do `isDynamoItem(value)`
 						if (!Item.isDynamoObject({"key": value})) {
 							obj.ExpressionAttributeValues[key] = await toDynamo(key, value);
 						}
 						return obj;
-					}, this.getInternalProperties(internalProperties).settings.raw as ObjectType);
+					}, {
+						[settings.conditionString]: (raw as ObjectType)[expressionKey],
+						"ExpressionAttributeNames": {...ExpressionAttributeNames},
+						// DynamoDB rejects an empty `ExpressionAttributeValues`, so an expression without values (`attribute_exists(#a)`) leaves it out.
+						...ExpressionAttributeValues ? {"ExpressionAttributeValues": {...ExpressionAttributeValues}} : {}
+					});
 				} else if (this.getInternalProperties(internalProperties).settings.conditions.length === 0) {
 					return {};
 				}
