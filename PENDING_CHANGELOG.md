@@ -5,6 +5,7 @@
 ### 🚨 Breaking Changes 🚨
 
 - `Item.save` now applies custom type conversion to the item it resolves with, so custom typed attributes (such as `Date`) are returned in the same representation as `Model.get`. Previously `save` resolved with the underlying DynamoDB representation (for example a `number` for `Date` attributes) while `get` resolved with the custom type (a `Date` instance)
+- `Model.update` and `Model.transaction.update` now set `createdAt` timestamps with `SET createdAt = if_not_exists(createdAt, :now)`, so an update that creates the item stores `createdAt` with the same value as `updatedAt`, and an update to an existing item keeps its `createdAt`. Previously an update never wrote `createdAt`. An existing item that has no `createdAt` gets the time of its next update, the request built with `return: "request"` has one more attribute name and value for each `createdAt` attribute, and `returnValues: "UPDATED_NEW"` or `"UPDATED_OLD"` now include `createdAt`. A `createdAt` or `updatedAt` attribute that is part of the table key is not set, and a `Combine` attribute that uses `createdAt` throws unless the update sets `createdAt` itself
 
 ### Features
 
@@ -21,6 +22,7 @@
 
 ### Bug Fixes
 
+- Fixed `Model.update` failing with `ValidationException: Two document paths overlap` when the update sets or removes a timestamp attribute itself (for example `{"updatedAt": date}` or `{"$REMOVE": ["updatedAt"]}`). Dynamoose no longer adds its own value for a timestamp attribute that the update already names
 - Fixed `deep_copy` dropping sibling properties that share the same object reference (e.g. a single `Date` used for both `createdAt` and `updatedAt`, or a single address used for both `billingAddress` and `shippingAddress`). Circular reference detection now tracks only the current ancestor path rather than every object ever visited, which also removes an infinite-recursion risk on self-referencing arrays and a shared-reference leak on class instances containing circular properties
 - Fixed `Model.update` corrupting arrays, Sets, and Buffers nested inside a map attribute. These values were traversed as if they were nested maps, which produced document paths keyed by array indices or byte offsets, and silently dropped Sets from the update entirely
 - Fixed `Item.attributesWithSchema` throwing `node.forEach is not a function` when an object was supplied for an attribute the schema defines as an array

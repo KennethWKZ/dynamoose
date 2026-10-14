@@ -538,7 +538,9 @@ Item.prepareForObjectFromSchema = async function<T extends InternalPropertiesCla
 
 			const createdAtProperties = timestampProperties.filter((val) => val.type === "createdAt");
 			const updatedAtProperties = timestampProperties.filter((val) => val.type === "updatedAt");
-			if (object.getInternalProperties && object.getInternalProperties(internalProperties) && !object.getInternalProperties(internalProperties).storedInDynamo && (typeof settings.updateTimestamps === "boolean" || settings.updateTimestamps.createdAt)) {
+			// `true` sets createdAt only on an item that isn't stored yet. `{"createdAt": true}` always sets it: `Model.update` uses that and writes it with `if_not_exists`, so only DynamoDB decides whether the item is new.
+			const isNewItem = Boolean(object.getInternalProperties && object.getInternalProperties(internalProperties) && !object.getInternalProperties(internalProperties).storedInDynamo);
+			if (typeof settings.updateTimestamps === "boolean" ? isNewItem : settings.updateTimestamps.createdAt) {
 				createdAtProperties.forEach((prop) => {
 					utils.object.set(object as any, prop.name, timeResult(prop));
 				});
