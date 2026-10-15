@@ -19,12 +19,17 @@ import {Condition} from "./Condition";
 import {TableExpiresSettings} from "./Table";
 import {InternalPropertiesClass} from "./InternalPropertiesClass";
 import CustomError from "./Error";
+import * as returnValuesOnConditionCheckFailure from "./utils/dynamoose/returnValuesOnConditionCheckFailure";
 import {GeneralObject} from "js-object-utilities";
 
 export interface ItemSaveSettings {
 	overwrite?: boolean;
 	return?: "request" | "item";
 	condition?: Condition;
+	/**
+	 * Set to `ALL_OLD` to have DynamoDB return the stored item when the `condition` fails, or, with `overwrite: false` (as `Model.create` uses), when the item exists. The thrown `ConditionalCheckFailedException` then has a `conditionCheckFailureItem` property with that item, as `Model.get` would return it. DynamoDB doesn't use read capacity to return it.
+	 */
+	returnValuesOnConditionCheckFailure?: DynamoDB.ReturnValuesOnConditionCheckFailure;
 }
 export interface ItemSettings {
 	type?: "fromDynamo" | "toDynamo";
@@ -443,7 +448,8 @@ export class Item extends InternalPropertiesClass<ItemInternalProperties> {
 			savedItem = item;
 			let putItemObj: DynamoDB.PutItemInput = {
 				"Item": item,
-				"TableName": table.getInternalProperties(internalProperties).name
+				"TableName": table.getInternalProperties(internalProperties).name,
+				...returnValuesOnConditionCheckFailure.requestProperty(localSettings.returnValuesOnConditionCheckFailure)
 			};
 
 			if (localSettings.condition) {
@@ -476,6 +482,8 @@ export class Item extends InternalPropertiesClass<ItemInternalProperties> {
 		const promise: Promise<DynamoDB.PutItemOutput> = Promise.all([paramsPromise, table.getInternalProperties(internalProperties).pendingTaskPromise()]).then((promises) => {
 			const [putItemObj] = promises;
 			return ddb(table.getInternalProperties(internalProperties).instance, "putItem", putItemObj);
+		}).catch(async (error) => {
+			throw await returnValuesOnConditionCheckFailure.addConditionCheckFailureItem(error, this.getInternalProperties(internalProperties).model);
 		});
 
 		const resultPromise = (async (): Promise<Item> => {

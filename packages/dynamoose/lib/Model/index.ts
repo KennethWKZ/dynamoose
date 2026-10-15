@@ -17,6 +17,7 @@ import {applyExpiresToSchemas, Table, TableExpiresSettings, TableOptionsOptional
 import type from "../type";
 import {InternalPropertiesClass} from "../InternalPropertiesClass";
 import {Instance} from "../Instance";
+import * as returnValuesOnConditionCheckFailure from "../utils/dynamoose/returnValuesOnConditionCheckFailure";
 import returnModel from "../utils/dynamoose/returnModel";
 
 // DynamoDB takes at most 100 keys in a `BatchGetItem` request and 25 requests in a `BatchWriteItem` request, so a larger batch is sent as several requests, `concurrency` at a time (one by default), and their responses are combined. If a request fails, no more requests are started and its error is thrown; the items of the requests that finished are already read or written.
@@ -209,6 +210,10 @@ interface ModelGetSettings {
 interface ModelDeleteSettings {
 	return?: null | "request";
 	condition?: Condition;
+	/**
+	 * Set to `ALL_OLD` to have DynamoDB return the stored item when the `condition` fails. The thrown `ConditionalCheckFailedException` then has a `conditionCheckFailureItem` property with that item, as `Model.get` would return it. DynamoDB doesn't use read capacity to return it.
+	 */
+	returnValuesOnConditionCheckFailure?: DynamoDB.ReturnValuesOnConditionCheckFailure;
 }
 interface ModelBatchPutSettings {
 	return?: "response" | "request";
@@ -221,6 +226,10 @@ interface ModelUpdateSettings {
 	returnValues?: DynamoDB.ReturnValue;
 	// How nested objects passed to `$SET` are applied. `false` (default) replaces the whole attribute as a map (`SET attr = {..}`), `true` flattens the object into document paths (`SET attr.sub = :v`) so subfields that were not passed in are left untouched.
 	merge?: boolean;
+	/**
+	 * Set to `ALL_OLD` to have DynamoDB return the stored item when the `condition` fails. The thrown `ConditionalCheckFailedException` then has a `conditionCheckFailureItem` property with that item, as `Model.get` would return it. DynamoDB doesn't use read capacity to return it.
+	 */
+	returnValuesOnConditionCheckFailure?: DynamoDB.ReturnValuesOnConditionCheckFailure;
 }
 interface ModelBatchGetItemsResponse<T> extends ItemArray<T> {
 	unprocessedKeys: ObjectType[];
@@ -1145,6 +1154,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 		const updateItemParamsPromise: Promise<DynamoDB.UpdateItemInput> = this.getInternalProperties(internalProperties).table().getInternalProperties(internalProperties).pendingTaskPromise().then(async () => ({
 			"Key": this.Item.objectToDynamo(await this.getInternalProperties(internalProperties).convertKeyToObject(keyObj)),
 			"ReturnValues": localSettings.returnValues || "ALL_NEW",
+			...returnValuesOnConditionCheckFailure.requestProperty(localSettings.returnValuesOnConditionCheckFailure),
 			...utils.merge_objects.main({"combineMethod": "object_combine"})(localSettings.condition ? await localSettings.condition.getInternalProperties(internalProperties).requestObject(this, {"index": {"start": index, "set": (i): void => {
 				index = i;
 			}}, "conditionString": "ConditionExpression", "conditionStringType": "string"}) : {}, await getUpdateExpressionObject()),
@@ -1159,7 +1169,9 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				return updateItemParamsPromise;
 			}
 		}
-		const promise = updateItemParamsPromise.then((params) => ddb(instance, "updateItem", params));
+		const promise = updateItemParamsPromise.then((params) => ddb(instance, "updateItem", params)).catch(async (error) => {
+			throw await returnValuesOnConditionCheckFailure.addConditionCheckFailureItem(error, this);
+		});
 
 		if (callback) {
 			promise.then((response) => response.Attributes ? itemify(response.Attributes) : undefined).then((response) => callback(null, response)).catch((error) => callback(error));
@@ -1215,7 +1227,8 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 		const getDeleteItemParams = async (settings: ModelDeleteSettings): Promise<DynamoDB.DeleteItemInput> => {
 			let deleteItemParams: DynamoDB.DeleteItemInput = {
 				"Key": this.Item.objectToDynamo(await this.getInternalProperties(internalProperties).convertKeyToObject(key)),
-				"TableName": table.getInternalProperties(internalProperties).name
+				"TableName": table.getInternalProperties(internalProperties).name,
+				...returnValuesOnConditionCheckFailure.requestProperty(settings.returnValuesOnConditionCheckFailure)
 			};
 
 			if (settings.condition) {
@@ -1240,7 +1253,9 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				})();
 			}
 		}
-		const promise = table.getInternalProperties(internalProperties).pendingTaskPromise().then(() => getDeleteItemParams(settings as ModelDeleteSettings)).then((deleteItemParams) => ddb(table.getInternalProperties(internalProperties).instance, "deleteItem", deleteItemParams));
+		const promise = table.getInternalProperties(internalProperties).pendingTaskPromise().then(() => getDeleteItemParams(settings as ModelDeleteSettings)).then((deleteItemParams) => ddb(table.getInternalProperties(internalProperties).instance, "deleteItem", deleteItemParams)).catch(async (error) => {
+			throw await returnValuesOnConditionCheckFailure.addConditionCheckFailureItem(error, this);
+		});
 
 		if (callback) {
 			promise.then(() => callback()).catch((error) => callback(error));

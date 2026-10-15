@@ -147,3 +147,9 @@ UserTypedModel.update({"id": "foo"}, {
 UserTypedModel.update({"id": "foo"}, {
 	"$SET": {"settings": {"notifications": false}}
 });
+
+const shouldPassUpdateWithReturnValuesOnConditionCheckFailure = model.update({"id": 1}, {"name": "Bob"}, {"returnValuesOnConditionCheckFailure": "ALL_OLD"});
+const shouldPassCreateWithReturnValuesOnConditionCheckFailure = model.create({"id": 1}, {"returnValuesOnConditionCheckFailure": "ALL_OLD"});
+const shouldPassDeleteWithReturnValuesOnConditionCheckFailure = model.delete({"id": 1}, {"returnValuesOnConditionCheckFailure": "NONE"});
+// @ts-expect-error
+const shouldFailUpdateWithInvalidReturnValuesOnConditionCheckFailure = model.update({"id": 1}, {"name": "Bob"}, {"returnValuesOnConditionCheckFailure": "ALL_NEW"});

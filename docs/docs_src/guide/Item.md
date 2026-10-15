@@ -30,6 +30,7 @@ You can also pass a settings object in as the first parameter. The following opt
 | overwrite | boolean | true | If an existing item with the same hash key should be overwritten in the database. You can set this to false to not overwrite an existing item with the same hash key. |
 | return | string | `item` | If the function should return the `item` or `request`. If you set this to `request` the request that would be made to DynamoDB will be returned, but no requests will be made to DynamoDB. |
 | condition | [`dynamoose.Condition`](/guide/Condition) | `null` | This is an optional instance of a Condition for the save. |
+| returnValuesOnConditionCheckFailure | string (`ALL_OLD` \| `NONE`) | DynamoDB's default, `NONE` | Set to `ALL_OLD` to have DynamoDB return the stored item when the condition fails, or, with `overwrite: false` (as `Model.create` uses), when the item exists. The thrown `ConditionalCheckFailedException` then has a `conditionCheckFailureItem` property with that item, as `Model.get` would return it (the raw item stays in its `Item` property). DynamoDB doesn't use read capacity to return it. In a `Model.transaction` request, the item comes back through `dynamoose.transaction`'s `conditionCheckFailureItems` instead. |
 
 Both `settings` and `callback` parameters are optional. You can pass in a `callback` without `settings`, just by passing in one argument and having that argument be the `callback`. You are not required to pass in `settings` if you just want to pass in a `callback`.
 

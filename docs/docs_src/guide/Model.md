@@ -329,6 +329,7 @@ You can also pass in a `settings` object parameter to define extra settings for 
 | condition | This is an optional instance of a Condition for the update. | [dynamoose.Condition](Condition.md) | `null`
 | returnValues | Set which documents to return after the update. This setting will be passed into the DynamoDB `ReturnValues` parameter. | String | `ALL_NEW`
 | merge | Set to `true` to update nested objects in place using document paths instead of replacing the whole attribute. See [Updating nested objects](#updating-nested-objects) below. | Boolean | `false`
+| returnValuesOnConditionCheckFailure | Set to `ALL_OLD` to have DynamoDB return the stored item when the condition fails. The thrown `ConditionalCheckFailedException` then has a `conditionCheckFailureItem` property with that item, as `Model.get` would return it (the raw item stays in its `Item` property). DynamoDB doesn't use read capacity to return it. In a `Model.transaction` request, the item comes back through `dynamoose.transaction`'s `conditionCheckFailureItems` instead. | String (`ALL_OLD` \| `NONE`) | DynamoDB's default, `NONE` |
 
 If the schema has `timestamps`, `update` sets each `updatedAt` attribute to the current time, and sets each `createdAt` attribute with `if_not_exists`. DynamoDB creates the item if it doesn't exist, so an update that creates the item stores both timestamps with the same value, and an update to an existing item keeps its `createdAt`. An existing item that has no `createdAt` gets the time of that update. A timestamp attribute you set, add to or remove in `updateObj` is updated as you specify instead.
 
@@ -449,6 +450,7 @@ You can also pass in an object for the optional `settings` parameter that is an 
 |------|-------------|------|---------|
 | return | What the function should return. Can be null, or `request`. In the event this is set to `request` the request Dynamoose will make to DynamoDB will be returned, and no request to DynamoDB will be made. If this is `request`, the function will not be async anymore. | String \| null | null |
 | condition | This is an optional instance of a Condition for the delete. | [dynamoose.Condition](Condition) | null
+| returnValuesOnConditionCheckFailure | Set to `ALL_OLD` to have DynamoDB return the stored item when the condition fails. The thrown `ConditionalCheckFailedException` then has a `conditionCheckFailureItem` property with that item, as `Model.get` would return it (the raw item stays in its `Item` property). DynamoDB doesn't use read capacity to return it. In a `Model.transaction` request, the item comes back through `dynamoose.transaction`'s `conditionCheckFailureItems` instead. | String (`ALL_OLD` \| `NONE`) | DynamoDB's default, `NONE` |
 
 ```js
 const User = dynamoose.model("User", {"id": Number, "name": String});
