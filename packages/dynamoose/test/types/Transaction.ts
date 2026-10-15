@@ -72,3 +72,9 @@ const shouldPassWithReturnValuesOnConditionCheckFailureAndReturnItems: Promise<[
 const shouldPassWithReturnValuesOnConditionCheckFailureAndReturnRequest = dynamoose.transaction([AccountModel.transaction.create({"id": 1, "balance": 0})], {"return": TransactionReturnOptions.request, "returnValuesOnConditionCheckFailure": "ALL_OLD"});
 // @ts-expect-error
 const shouldFailWithInvalidReturnValuesOnConditionCheckFailure = dynamoose.transaction([AccountModel.transaction.create({"id": 1, "balance": 0})], {"returnValuesOnConditionCheckFailure": "ALL_NEW"});
+
+// @ts-expect-error
+const shouldFailWithInvalidClientRequestToken = dynamoose.transaction([AccountModel.transaction.create({"id": 1, "balance": 0})], {"clientRequestToken": 1});
+const shouldPassWithRetryAndCallback = dynamoose.transaction([AccountModel.transaction.create({"id": 1, "balance": 0})], {"retry": {"attempts": 3}}, (a, b) => {
+	return;
+});

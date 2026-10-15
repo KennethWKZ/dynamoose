@@ -485,6 +485,16 @@ describe("Transaction", () => {
 					return expect(callType.func(dynamoose.transaction)([User.transaction.get({"id": 1})], {"clientRequestToken": "token-1"})).rejects.toEqual(new CustomError.InvalidParameter("clientRequestToken can only be used with a write transaction."));
 				});
 
+				it("Should throw an error for a clientRequestToken with the type set to get", () => {
+					return expect(callType.func(dynamoose.transaction)([User.transaction.create({"id": 1, "name": "Bob"})], {"clientRequestToken": "token-1", "type": "get"})).rejects.toEqual(new CustomError.InvalidParameter("clientRequestToken can only be used with a write transaction."));
+				});
+
+				it("Should send the clientRequestToken with the type set to write", async () => {
+					mockAWS([{}]);
+					await callType.func(dynamoose.transaction)([User.transaction.get({"id": 1})], {"clientRequestToken": "token-1", "type": "write"});
+					expect(writeParams[0].ClientRequestToken).toEqual("token-1");
+				});
+
 				it("Should throw an error for an invalid clientRequestToken", () => {
 					return expect(callType.func(dynamoose.transaction)([User.transaction.create({"id": 1, "name": "Bob"})], {"clientRequestToken": ""})).rejects.toEqual(new CustomError.InvalidParameter("clientRequestToken must be a string of 1 to 36 characters."));
 				});
@@ -541,6 +551,34 @@ describe("Transaction", () => {
 						expect(result).toBe(error);
 						expect(writeParams.length).toEqual(1);
 					});
+				});
+
+				[["a cancellation without reasons", Object.assign(new Error("Transaction cancelled"), {"name": "TransactionCanceledException"})]].forEach(([label, error]) => {
+					it(`Should not retry ${label}`, async () => {
+						writeParams = [];
+						dynamoose.aws.ddb.set({
+							"transactWriteItems": (params) => {
+								writeParams.push(params);
+								return writeParams.length === 1 ? Promise.reject(error) : Promise.resolve({});
+							}
+						});
+						const result = await callType.func(dynamoose.transaction)([User.transaction.create({"id": 1, "name": "Bob"})], {"retry": {"attempts": 3, "delay": 0}}).catch((e) => e);
+						expect(result).toBe(error);
+						expect(writeParams.length).toEqual(1);
+					});
+				});
+
+				it("Should wait up to 100 milliseconds before the first retry by default", async () => {
+					mockAWS([canceled(["TransactionConflict"]), {}]);
+					const random = jest.spyOn(Math, "random").mockReturnValue(0.5);
+					try {
+						const start = Date.now();
+						await callType.func(dynamoose.transaction)([User.transaction.create({"id": 1, "name": "Bob"})], {"retry": {"attempts": 1}});
+						expect(Date.now() - start).toBeGreaterThanOrEqual(45);
+						expect(writeParams.length).toEqual(2);
+					} finally {
+						random.mockRestore();
+					}
 				});
 
 				it("Should not retry without the retry setting", async () => {
