@@ -1,4 +1,5 @@
 import ddb from "./aws/ddb/internal";
+import {randomUUID} from "crypto";
 import * as DynamoDB from "@aws-sdk/client-dynamodb";
 import utils from "./utils";
 import Error from "./Error";
@@ -22,6 +23,20 @@ enum TransactionType {
 export interface TransactionSettings {
 	return?: TransactionReturnOptions;
 	type?: TransactionType;
+	/**
+	 * A token of 1 to 36 characters that DynamoDB uses to make a `write` transaction idempotent: for 10 minutes after a successful transaction, sending the same transaction again with the same token succeeds without writing anything again. Without it, the AWS SDK sends a new token with every call. Use it when a caller may send the same write again, for example a retried Lambda event, and build it from something that identifies that write (such as an event id). Sending different transaction items with a token that was already used fails with `IdempotentParameterMismatchException`.
+	 */
+	clientRequestToken?: string;
+	/**
+	 * Sends the transaction again when DynamoDB cancels it because it conflicts with another request on the same item (a `TransactionCanceledException` with a `TransactionConflict` reason) or reports it as still in progress (`TransactionInProgressException`). A canceled transaction writes nothing, so it is safe to send again. A transaction in progress may still be applied, so every attempt sends the same `ClientRequestToken`, and DynamoDB applies the transaction at most once: your `clientRequestToken`, or one Dynamoose makes for this call (replaced after a cancellation). Any other error, including a failed condition, is thrown at once.
+	 *
+	 * `attempts` is how many times to send it again. Retry `n` waits a random time between 0 and `delay * 2^(n - 1)` milliseconds, but at most 20 seconds; `delay` defaults to `100`. After the last attempt, the last error is thrown.
+	 *
+	 * ```js
+	 * await dynamoose.transaction([...], {"retry": {"attempts": 3, "delay": 500}, "clientRequestToken": eventId});
+	 * ```
+	 */
+	retry?: {attempts: number; delay?: number};
 	/**
 	 * DynamoDB does not return items from a write transaction, so by default a `write` transaction resolves with `null`. Set `returnItems` to `true` to resolve with an array that has one entry per object in `transactions`, in the same order:
 	 *
@@ -116,10 +131,24 @@ function Transaction (transactions: Transactions, settings?: TransactionSettings
 
 		const transactionObjects = await Promise.all(transactions);
 
-		const {returnValuesOnConditionCheckFailure} = settings;
+		const {returnValuesOnConditionCheckFailure, clientRequestToken} = settings;
 		if (returnValuesOnConditionCheckFailure !== undefined && !["ALL_OLD", "NONE"].includes(returnValuesOnConditionCheckFailure)) {
 			throw new Error.InvalidParameter("Invalid returnValuesOnConditionCheckFailure option, please pass in \"ALL_OLD\" or \"NONE\".");
 		}
+		if (clientRequestToken !== undefined) {
+			if (typeof clientRequestToken !== "string" || clientRequestToken.length < 1 || clientRequestToken.length > 36) {
+				throw new Error.InvalidParameter("clientRequestToken must be a string of 1 to 36 characters.");
+			}
+			const isGetTransaction = settings.type ? settings.type === TransactionType.get : transactionObjects.every((transaction) => Object.keys(transaction)[0] === "Get");
+			if (isGetTransaction) {
+				throw new Error.InvalidParameter("clientRequestToken can only be used with a write transaction.");
+			}
+		}
+		const retry = settings.retry ?? {"attempts": 0};
+		if (!Number.isInteger(retry?.attempts) || retry.attempts < 0 || retry.delay !== undefined && !(typeof retry.delay === "number" && retry.delay >= 0)) {
+			throw new Error.InvalidParameter("retry.attempts must be a whole number of 0 or more, and retry.delay a number of milliseconds of 0 or more.");
+		}
+
 		const transactionParams = {
 			// Copies the requests that get the setting, so the objects passed in are unchanged.
 			"TransactItems": returnValuesOnConditionCheckFailure === undefined ? transactionObjects : transactionObjects.map((transaction) => {
@@ -128,7 +157,8 @@ function Transaction (transactions: Transactions, settings?: TransactionSettings
 					return transaction;
 				}
 				return {[key]: {...value, "ReturnValuesOnConditionCheckFailure": returnValuesOnConditionCheckFailure}} as Transaction;
-			})
+			}),
+			...clientRequestToken !== undefined ? {"ClientRequestToken": clientRequestToken} : {}
 		};
 
 		if (settings.return === TransactionReturnOptions.request) {
@@ -189,19 +219,35 @@ function Transaction (transactions: Transactions, settings?: TransactionSettings
 			return new model.Item(attributes, {"type": "fromDynamo"}).conformToSchema({"customTypesDynamo": true, "checkExpiredItem": checkExpiredItem, "saveUnknown": true, "modifiers": ["get"], "type": "fromDynamo", "mapAttributes": true});
 		};
 
+		// A transaction DynamoDB canceled for a conflict, or reports as in progress, wrote nothing, so it can be sent again.
+		const isRetryable = (error: any): boolean => error?.name === "TransactionInProgressException" || error?.name === "TransactionCanceledException" && Array.isArray(error.CancellationReasons) && error.CancellationReasons.some((reason: DynamoDB.CancellationReason) => reason?.Code === "TransactionConflict");
+		// Without a token the AWS SDK sends a new one with every call. A transaction reported as in progress may still be applied, so sending it again with a new token could apply it twice. Retries keep one token, which DynamoDB applies at most once.
+		const generatesToken = transactionType === "transactWriteItems" && retry.attempts > 0 && clientRequestToken === undefined;
+		let sentParams = generatesToken ? {...transactionParams, "ClientRequestToken": randomUUID()} : transactionParams;
 		let result: any;
-		try {
-			// TODO: remove `as any` here (https://stackoverflow.com/q/61111476/894067)
-			result = await ddb(instance, transactionType as any, transactionParams as any);
-		} catch (error) {
-			// With `ReturnValuesOnConditionCheckFailure: ALL_OLD`, a cancellation reason holds the stored item of a request whose condition failed.
-			const reasons: DynamoDB.CancellationReason[] | undefined = error?.name === "TransactionCanceledException" ? error.CancellationReasons : undefined;
-			if (Array.isArray(reasons) && reasons.some((reason) => reason?.Item)) {
-				try {
-					error.conditionCheckFailureItems = await Promise.all(reasons.map((reason, index) => reason?.Item ? toItem(reason.Item, tableNames[index], transactionObjects[index][transactionModel], false) : undefined));
-				} catch (conversionError) {} // eslint-disable-line no-empty
+		for (let attempt = 1; ; attempt++) {
+			try {
+				// TODO: remove `as any` here (https://stackoverflow.com/q/61111476/894067)
+				result = await ddb(instance, transactionType as any, sentParams as any);
+				break;
+			} catch (error) {
+				if (attempt <= retry.attempts && isRetryable(error)) {
+					// A canceled transaction is finished and wrote nothing, so a token Dynamoose made is replaced. A token the caller passed is always kept.
+					if (generatesToken && error?.name === "TransactionCanceledException") {
+						sentParams = {...sentParams, "ClientRequestToken": randomUUID()};
+					}
+					await utils.timeout(Math.random() * Math.min(20000, (retry.delay ?? 100) * 2 ** (attempt - 1)));
+					continue;
+				}
+				// With `ReturnValuesOnConditionCheckFailure: ALL_OLD`, a cancellation reason holds the stored item of a request whose condition failed.
+				const reasons: DynamoDB.CancellationReason[] | undefined = error?.name === "TransactionCanceledException" ? error.CancellationReasons : undefined;
+				if (Array.isArray(reasons) && reasons.some((reason) => reason?.Item)) {
+					try {
+						error.conditionCheckFailureItems = await Promise.all(reasons.map((reason, index) => reason?.Item ? toItem(reason.Item, tableNames[index], transactionObjects[index][transactionModel], false) : undefined));
+					} catch (conversionError) {} // eslint-disable-line no-empty
+				}
+				throw error;
 			}
-			throw error;
 		}
 		if (result.Responses) {
 			return Promise.all(result.Responses.map((item: any, index: number) => toItem(item.Item, tableNames[index])));

@@ -41,6 +41,12 @@ class Account extends Item {
 }
 const AccountModel = dynamoose.model<Account>("Account", {"id": Number, "balance": Number});
 
+const shouldPassWithClientRequestToken = dynamoose.transaction([AccountModel.transaction.create({"id": 1, "balance": 0})], {"clientRequestToken": "token-1"});
+const shouldPassWithRetry = dynamoose.transaction([AccountModel.transaction.create({"id": 1, "balance": 0})], {"retry": {"attempts": 3, "delay": 500}});
+const shouldPassWithRetryAndReturnItems: Promise<[Account]> = dynamoose.transaction<[Account]>([AccountModel.transaction.create({"id": 1, "balance": 0})], {"retry": {"attempts": 3}, "returnItems": true});
+// @ts-expect-error
+const shouldFailWithRetryWithoutAttempts = dynamoose.transaction([AccountModel.transaction.create({"id": 1, "balance": 0})], {"retry": {"delay": 500}});
+
 const shouldPassWithReturnItems: Promise<any[]> = dynamoose.transaction([AccountModel.transaction.create({"id": 1, "balance": 0})], {"returnItems": true});
 const shouldPassWithReturnItemsAndItemTypes: Promise<[Account, Account | undefined]> = dynamoose.transaction<[Account, Account | undefined]>([AccountModel.transaction.create({"id": 1, "balance": 0}), AccountModel.transaction.delete({"id": 2})], {"returnItems": true});
 async function shouldPassReadingTypedReturnItems (): Promise<number> {
