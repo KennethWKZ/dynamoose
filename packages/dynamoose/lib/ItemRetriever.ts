@@ -272,7 +272,7 @@ ItemRetriever.prototype.getRequest = async function (this: ItemRetriever): Promi
 		// Operators that are legal in a FilterExpression but not in a KeyConditionExpression
 		// must stay where they are, otherwise DynamoDB rejects the request with
 		// "Invalid operator used in KeyConditionExpression".
-		if (filterExpression.includes("attribute_exists") || filterExpression.includes("contains") || filterExpression.includes(" IN (") || filterExpression.includes("<>")) {
+		if (filterExpression.includes("attribute_exists") || filterExpression.includes("contains") || filterExpression.includes(" IN (") || filterExpression.includes("<>") || filterExpression.startsWith("NOT ")) {
 			return;
 		}
 		object.ExpressionAttributeNames[`#${prefix}a`] = value;
