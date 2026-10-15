@@ -80,10 +80,11 @@ describe("utils.object_delete_copy", () => {
 		}
 	});
 
-	it("Should follow an own __proto__ key on a path", () => {
+	it("Should not delete through an own __proto__ key on a path", () => {
 		const nested = JSON.parse("{\"__proto__\": {\"a\": 1, \"b\": 2}}");
 		const result = utils.object_delete_copy({nested}, ["nested.__proto__.a"]);
-		expect(result.nested.__proto__).toEqual({"b": 2});
+		// js-object-utilities refuses any path through `__proto__`, so nothing is deleted.
+		expect(result.nested.__proto__).toEqual({"a": 1, "b": 2});
 		expect(nested.__proto__).toEqual({"a": 1, "b": 2});
 	});
 
