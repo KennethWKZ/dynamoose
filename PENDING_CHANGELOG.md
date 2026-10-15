@@ -9,6 +9,9 @@
 
 ### Features
 
+- `Model.batchGet` now sends more than 100 keys, and `Model.batchPut` and `Model.batchDelete` more than 25 items, as several DynamoDB requests one after another, and combine their results and unprocessed keys or items. Before, DynamoDB rejected such a batch with `ValidationException: Too many items requested`. A batch sent as more than one request throws an `InvalidParameter` error, before sending any of it, when two of its keys or items have the same key, as DynamoDB does for a single request
+- Added a `retryUnprocessed` setting to `Model.batchGet`, `Model.batchPut` and `Model.batchDelete`. With `{"attempts": n}`, Dynamoose sends the keys or items DynamoDB returns as unprocessed again, up to `n` times with exponential backoff and full jitter (`delay`, default 100 ms), and returns only what is still unprocessed after that. Each wait is at most 20 seconds
+- Added a `concurrency` setting to `Model.batchGet`, `Model.batchPut` and `Model.batchDelete`, which sends that many of a large batch's DynamoDB requests at a time (default 1)
 - Added support for enabling and configuring DynamoDB Streams through Table options
 - Added a `merge` setting to `Model.update`. Passing `{"merge": true}` updates a nested object in place by writing each provided property to its own document path (`SET attr.sub = :v`), matching how a nested attribute update is expressed against DynamoDB directly, instead of replacing the whole attribute as a map. The default behavior is unchanged
 - Added support for enabling table deletion protection through the `deletionProtection` Table option. It is applied on create, and on update it can only be turned on; turning it back off requires `update` to explicitly include `deletionProtection`
