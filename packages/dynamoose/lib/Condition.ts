@@ -2,6 +2,8 @@ import {Item} from "./Item";
 import CustomError from "./Error";
 import utils from "./utils";
 const OR = Symbol("OR");
+// Marks a group that is a raw condition object (`parenthesis(new Condition({FilterExpression, ...}))`).
+const RAW_GROUP = Symbol("RAW_GROUP");
 import * as DynamoDB from "@aws-sdk/client-dynamodb";
 import {ObjectType} from "./General";
 import {ExpressionAttributeNameMap, ExpressionAttributeValueMap} from "./Types";
@@ -159,20 +161,14 @@ export class Condition extends InternalPropertiesClass<ConditionInternalProperti
 					return Item.objectToDynamo(newValue, {"type": "value"});
 				};
 
-				const {raw} = this.getInternalProperties(internalProperties).settings;
-				if (raw && typeof raw === "object" && isRawConditionObject(raw)) {
+				const rawRequestObject = async (raw: ObjectType): Promise<ObjectType> => {
 					const [expressionKey] = Object.keys(raw).filter((key) => key !== "ExpressionAttributeNames" && key !== "ExpressionAttributeValues");
 					// A condition expression and a filter expression have the same syntax, so either one is used for whichever the request needs. Any other key would leave the request without the condition.
 					if (!rawConditionExpressionKeys.includes(expressionKey)) {
 						throw new CustomError.InvalidParameter(`A raw condition object must have a "ConditionExpression" or "FilterExpression" property, but it has "${expressionKey}".`);
 					}
 					// Builds a new object, because callers merge their own names and values into the result.
-					const {ExpressionAttributeNames, ExpressionAttributeValues} = raw as ObjectType;
-					// A caller numbers its own names and values (`#a0`, `:v0`) from the index, so it starts after the raw condition's, and neither replaces the other.
-					if (settings.index) {
-						const usedIndexes = [...Object.keys(ExpressionAttributeNames || {}), ...Object.keys(ExpressionAttributeValues || {})].map((key) => (/^(?:#a|:v)(\d+)$/).exec(key)).filter(Boolean).map((match) => parseInt(match[1]) + 1);
-						settings.index.set(Math.max(settings.index.start || 0, ...usedIndexes));
-					}
+					const {ExpressionAttributeNames, ExpressionAttributeValues} = raw;
 					return utils.async_reduce(Object.entries(ExpressionAttributeValues || {}), async (obj, entry) => {
 						const [key, value] = entry;
 						// TODO: we should fix this so that we can do `isDynamoItem(value)`
@@ -181,11 +177,30 @@ export class Condition extends InternalPropertiesClass<ConditionInternalProperti
 						}
 						return obj;
 					}, {
-						[settings.conditionString]: (raw as ObjectType)[expressionKey],
+						[settings.conditionString]: raw[expressionKey],
 						"ExpressionAttributeNames": {...ExpressionAttributeNames},
 						// DynamoDB rejects an empty `ExpressionAttributeValues`, so an expression without values (`attribute_exists(#a)`) leaves it out.
 						...ExpressionAttributeValues ? {"ExpressionAttributeValues": {...ExpressionAttributeValues}} : {}
 					});
+				};
+				// Dynamoose numbers its own names and values (`#a0`, `:v0`), so it starts after the ones a raw condition uses, and neither replaces the other.
+				const rawIndexes = (input: ConditionStorageSettingsConditions): number[] => input.reduce((indexes: number[], entry) => {
+					if (!Array.isArray(entry)) {
+						return indexes;
+					}
+					if (!entry[RAW_GROUP]) {
+						return [...indexes, ...rawIndexes(entry)];
+					}
+					const {ExpressionAttributeNames, ExpressionAttributeValues} = entry[RAW_GROUP];
+					return [...indexes, ...[...Object.keys(ExpressionAttributeNames || {}), ...Object.keys(ExpressionAttributeValues || {})].map((key) => (/^(?:#a|:v)(\d+)$/).exec(key)).filter(Boolean).map((match) => parseInt(match[1]) + 1)];
+				}, []);
+
+				const {raw} = this.getInternalProperties(internalProperties).settings;
+				if (raw && typeof raw === "object" && isRawConditionObject(raw)) {
+					if (settings.index) {
+						settings.index.set(Math.max(settings.index.start || 0, ...rawIndexes([Object.assign([], {[RAW_GROUP]: raw})])));
+					}
+					return rawRequestObject(raw as ObjectType);
 				} else if (this.getInternalProperties(internalProperties).settings.conditions.length === 0) {
 					return {};
 				}
@@ -194,15 +209,26 @@ export class Condition extends InternalPropertiesClass<ConditionInternalProperti
 				const setIndex = (i: number): void => {
 					index = i; (settings.index || {"set": utils.empty_function}).set(i);
 				};
+				setIndex(Math.max(index, ...rawIndexes(this.getInternalProperties(internalProperties).settings.conditions)));
 				async function main (input: ConditionStorageSettingsConditions): Promise<ConditionRequestObjectResult> {
 					return utils.async_reduce(input, async (object: ConditionRequestObjectResult, entry: ConditionStorageTypeNested, i: number, arr: any[]) => {
 						let expression = "";
 						if (Array.isArray(entry)) {
-							const result = await main(entry);
+							const result = entry[RAW_GROUP] ? await rawRequestObject(entry[RAW_GROUP]) : await main(entry);
+							// Two raw conditions can't give one name or value placeholder different meanings.
+							["ExpressionAttributeNames", "ExpressionAttributeValues"].forEach((property) => {
+								Object.entries(result[property] || {}).forEach(([key, value]) => {
+									if (key in object[property] && JSON.stringify(object[property][key]) !== JSON.stringify(value)) {
+										throw new CustomError.InvalidParameter(`The raw condition uses "${key}" for ${JSON.stringify(value)}, but the condition already uses it for ${JSON.stringify(object[property][key])}. Give each raw condition its own placeholders.`);
+									}
+								});
+							});
 							const newData = utils.merge_objects.main({"combineMethod": "object_combine"})({...result}, {...object});
 							const returnObject = utils.object.pick(newData, ["ExpressionAttributeNames", "ExpressionAttributeValues"]);
 
-							expression = settings.conditionStringType === "array" ? result[settings.conditionString] : `(${result[settings.conditionString]})`;
+							// A raw condition is one expression, so it is a group of one part.
+							const groupExpression = entry[RAW_GROUP] && settings.conditionStringType === "array" ? [result[settings.conditionString]] : result[settings.conditionString];
+							expression = settings.conditionStringType === "array" ? groupExpression : `(${groupExpression})`;
 							object = {...object, ...returnObject};
 						} else if (entry !== OR) {
 							const keyConditionObj = Object.entries(entry)[0];
@@ -287,6 +313,10 @@ export class Condition extends InternalPropertiesClass<ConditionInternalProperti
 			"comparisonChart": (model: Model<Item>): Promise<any> => {
 				const comparisonChart = this.getInternalProperties(internalProperties).settings.conditions.reduce((res, item) => {
 					const myItem = Object.entries(item)[0];
+					// A raw condition in a group has no attribute to compare.
+					if (!myItem) {
+						return res;
+					}
 					const key = myItem[0];
 					res[key] = {"type": (myItem[1] as any).type};
 					return res;
@@ -414,8 +444,10 @@ export class Condition extends InternalPropertiesClass<ConditionInternalProperti
 	 */
 	parenthesis (condition: Condition | ConditionFunction): Condition {
 		condition = typeof condition === "function" ? condition(new Condition()) : condition;
-		const conditions = condition.getInternalProperties(internalProperties).settings.conditions;
-		this.getInternalProperties(internalProperties).settings.conditions.push(conditions as any);
+		const {conditions, raw} = condition.getInternalProperties(internalProperties).settings;
+		// A raw condition has no conditions of its own, only its expression, so the group keeps the raw object.
+		const group = raw && typeof raw === "object" && isRawConditionObject(raw) ? Object.assign([], {[RAW_GROUP]: raw}) : conditions;
+		this.getInternalProperties(internalProperties).settings.conditions.push(group as any);
 		return this;
 	}
 	/**

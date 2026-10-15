@@ -2169,5 +2169,55 @@ describe("Query", () => {
 			const request = await Model.scan(raw("#id = :id", {"#id": "id"}, {":id": 1})).getRequest();
 			expect(request).toEqual({"TableName": "Cat", "FilterExpression": "#id = :id", "ExpressionAttributeNames": {"#id": "id"}, "ExpressionAttributeValues": {":id": {"N": "1"}}});
 		});
+
+		describe("In a group", () => {
+			it("Should keep a raw condition in parenthesis() in the FilterExpression", async () => {
+				await Model.query(new dynamoose.Condition().where("id").eq(1).parenthesis(raw("size (#fn) <> :size", {"#fn": "favoriteNumber"}, {":size": 0}))).exec();
+				expect(queryParams).toEqual({
+					"TableName": "Cat",
+					"KeyConditionExpression": "#qha = :qhv",
+					"FilterExpression": "(size (#fn) <> :size)",
+					"ExpressionAttributeNames": {"#qha": "id", "#fn": "favoriteNumber"},
+					"ExpressionAttributeValues": {":qhv": {"N": "1"}, ":size": {"N": "0"}}
+				});
+			});
+
+			it("Should keep a raw condition in group() that comes before the key condition", async () => {
+				await Model.query(new dynamoose.Condition().group(() => raw("#fn > :fn", {"#fn": "favoriteNumber"}, {":fn": 5})).and().where("id").eq(1)).exec();
+				expect(queryParams).toEqual({
+					"TableName": "Cat",
+					"KeyConditionExpression": "#qha = :qhv",
+					"FilterExpression": "(#fn > :fn)",
+					"ExpressionAttributeNames": {"#qha": "id", "#fn": "favoriteNumber"},
+					"ExpressionAttributeValues": {":qhv": {"N": "1"}, ":fn": {"N": "5"}}
+				});
+			});
+
+			it("Should number the condition's names and values after the ones the raw condition uses", async () => {
+				await Model.query(new dynamoose.Condition().parenthesis(raw("#a0 > :v0", {"#a0": "favoriteNumber"}, {":v0": 5})).and().where("id").eq(1)).exec();
+				expect(queryParams).toEqual({
+					"TableName": "Cat",
+					"KeyConditionExpression": "#qha = :qhv",
+					"FilterExpression": "(#a0 > :v0)",
+					"ExpressionAttributeNames": {"#qha": "id", "#a0": "favoriteNumber"},
+					"ExpressionAttributeValues": {":qhv": {"N": "1"}, ":v0": {"N": "5"}}
+				});
+			});
+
+			it("Should use a raw condition in parenthesis() in a scan", async () => {
+				const request = await Model.scan(new dynamoose.Condition().where("name").eq("Bob").or().parenthesis(new dynamoose.Condition({"FilterExpression": "attribute_exists(#fn)", "ExpressionAttributeNames": {"#fn": "favoriteNumber"}}))).getRequest();
+				expect(request).toEqual({"TableName": "Cat", "FilterExpression": "#a0 = :v0 OR (attribute_exists(#fn))", "ExpressionAttributeNames": {"#a0": "name", "#fn": "favoriteNumber"}, "ExpressionAttributeValues": {":v0": {"S": "Bob"}}});
+			});
+
+			it("Should throw for two raw conditions that use one placeholder for different values", async () => {
+				const condition = new dynamoose.Condition().parenthesis(raw("#fn > :n", {"#fn": "favoriteNumber"}, {":n": 5})).and().parenthesis(raw("#fn < :n", {"#fn": "favoriteNumber"}, {":n": 9}));
+				await expect(Model.scan(condition).getRequest()).rejects.toEqual(new CustomError.InvalidParameter("The raw condition uses \":n\" for {\"N\":\"9\"}, but the condition already uses it for {\"N\":\"5\"}. Give each raw condition its own placeholders."));
+			});
+
+			it("Should allow two raw conditions that use one placeholder for the same value", async () => {
+				const request = await Model.scan(new dynamoose.Condition().parenthesis(raw("#fn > :n", {"#fn": "favoriteNumber"}, {":n": 5})).or().parenthesis(raw("#fn = :n", {"#fn": "favoriteNumber"}, {":n": 5}))).getRequest();
+				expect(request).toEqual({"TableName": "Cat", "FilterExpression": "(#fn > :n) OR (#fn = :n)", "ExpressionAttributeNames": {"#fn": "favoriteNumber"}, "ExpressionAttributeValues": {":n": {"N": "5"}}});
+			});
+		});
 	});
 });

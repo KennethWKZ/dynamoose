@@ -3508,6 +3508,23 @@ describe("Model", () => {
 					});
 				});
 
+				it("Should number the update's names and values after the ones a raw condition in a group uses", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", new dynamoose.Schema({"id": Number, "name": String, "status": String}));
+					new dynamoose.Table("User", [User]);
+					const condition = new dynamoose.Condition().where("status").eq("open").parenthesis(new dynamoose.Condition({"ConditionExpression": "#a0 <> :v0", "ExpressionAttributeNames": {"#a0": "name"}, "ExpressionAttributeValues": {":v0": "Bob"}}));
+					await callType.func(User).bind(User)({"id": 1}, {"name": "Charlie"}, {condition});
+					expect(updateItemParams).toEqual({
+						"ExpressionAttributeNames": {"#a0": "name", "#a1": "status", "#a2": "name"},
+						"ExpressionAttributeValues": {":v0": {"S": "Bob"}, ":v1": {"S": "open"}, ":v2": {"S": "Charlie"}},
+						"UpdateExpression": "SET #a2 = :v2",
+						"ConditionExpression": "#a1 = :v1 AND (#a0 <> :v0)",
+						"Key": {"id": {"N": "1"}},
+						"TableName": "User",
+						"ReturnValues": "ALL_NEW"
+					});
+				});
+
 				it("Should number the update's names and values after the ones a raw condition uses", async () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", new dynamoose.Schema({"id": Number, "name": String, "status": String}));

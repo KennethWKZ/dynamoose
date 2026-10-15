@@ -310,6 +310,21 @@ describe("Condition", () => {
 				expect(await condition.getInternalProperties(internalProperties).requestObject(model)).toEqual({"ConditionExpression": "#a0 = :v0 AND #a1 = :v1", "ExpressionAttributeNames": {"#a0": "id", "#a1": "name"}, "ExpressionAttributeValues": {":v0": {"S": "1"}, ":v1": {"S": "Bob"}}});
 			});
 
+			it("Should use a raw condition in parenthesis() as a group of the condition expression", async () => {
+				const condition = new Condition().where("id").eq("1").parenthesis(new Condition({"ConditionExpression": "attribute_exists(#n)", "ExpressionAttributeNames": {"#n": "name"}}));
+				expect(await condition.getInternalProperties(internalProperties).requestObject(model)).toEqual({"ConditionExpression": "#a0 = :v0 AND (attribute_exists(#n))", "ExpressionAttributeNames": {"#a0": "id", "#n": "name"}, "ExpressionAttributeValues": {":v0": {"S": "1"}}});
+			});
+
+			it("Should use a raw condition in parenthesis() as a group of one part in an array", async () => {
+				const condition = new Condition().where("id").eq("1").parenthesis(new Condition({"FilterExpression": "#n = :n", "ExpressionAttributeNames": {"#n": "name"}, "ExpressionAttributeValues": {":n": "Bob"}}));
+				expect(await condition.getInternalProperties(internalProperties).requestObject(model, {"conditionString": "FilterExpression", "conditionStringType": "array"})).toEqual({"FilterExpression": ["#a0 = :v0", "AND", ["#n = :n"]], "ExpressionAttributeNames": {"#a0": "id", "#n": "name"}, "ExpressionAttributeValues": {":v0": {"S": "1"}, ":n": {"S": "Bob"}}});
+			});
+
+			it("Should throw an error for a raw condition in parenthesis() with an unknown property", () => {
+				const condition = new Condition().parenthesis(new Condition({"ComparisonExpression": "attribute_exists(#n)", "ExpressionAttributeNames": {"#n": "name"}}));
+				return expect(condition.getInternalProperties(internalProperties).requestObject(model)).rejects.toEqual(new CustomError.InvalidParameter("A raw condition object must have a \"ConditionExpression\" or \"FilterExpression\" property, but it has \"ComparisonExpression\"."));
+			});
+
 			it("Should not change the object passed in", async () => {
 				const raw = {"FilterExpression": "#id = :id", "ExpressionAttributeValues": {":id": "5"}, "ExpressionAttributeNames": {"#id": "id"}};
 				const condition = new Condition(raw);
