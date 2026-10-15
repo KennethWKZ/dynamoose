@@ -178,9 +178,9 @@ export class Condition extends InternalPropertiesClass<ConditionInternalProperti
 						return obj;
 					}, {
 						[settings.conditionString]: raw[expressionKey],
-						"ExpressionAttributeNames": {...ExpressionAttributeNames},
-						// DynamoDB rejects an empty `ExpressionAttributeValues`, so an expression without values (`attribute_exists(#a)`) leaves it out.
-						...ExpressionAttributeValues ? {"ExpressionAttributeValues": {...ExpressionAttributeValues}} : {}
+						// DynamoDB rejects an empty map, so an expression without names (`id = :id`) or values (`attribute_exists(#a)`) leaves it out.
+						...Object.keys(ExpressionAttributeNames).length > 0 ? {"ExpressionAttributeNames": {...ExpressionAttributeNames}} : {},
+						...Object.keys(ExpressionAttributeValues || {}).length > 0 ? {"ExpressionAttributeValues": {...ExpressionAttributeValues}} : {}
 					});
 				};
 				// Dynamoose numbers its own names and values (`#a0`, `:v0`), so it starts after the ones a raw condition uses, and neither replaces the other.

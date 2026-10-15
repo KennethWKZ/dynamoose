@@ -300,6 +300,11 @@ describe("Condition", () => {
 				});
 			});
 
+			it("Should leave out empty ExpressionAttributeNames and ExpressionAttributeValues", async () => {
+				const condition = new Condition({"ConditionExpression": "attribute_exists(id)", "ExpressionAttributeNames": {}, "ExpressionAttributeValues": {}});
+				expect(await condition.getInternalProperties(internalProperties).requestObject(model)).toEqual({"ConditionExpression": "attribute_exists(id)"});
+			});
+
 			it("Should throw an error for an unknown property without ExpressionAttributeValues", () => {
 				const condition = new Condition({"ComparisonExpression": "attribute_exists(#id)", "ExpressionAttributeNames": {"#id": "id"}});
 				return expect(condition.getInternalProperties(internalProperties).requestObject(model)).rejects.toEqual(new CustomError.InvalidParameter("A raw condition object must have a \"ConditionExpression\" or \"FilterExpression\" property, but it has \"ComparisonExpression\"."));
