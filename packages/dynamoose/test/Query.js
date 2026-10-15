@@ -2201,6 +2201,21 @@ describe("Query", () => {
 			await expect(Model.query(raw("#id > :id", {"#id": "id"}, {":id": 1})).exec()).rejects.toEqual(new CustomError.InvalidParameter("Index can't be found for query."));
 		});
 
+		it("Should move a key condition that comes after a parenthesized group", async () => {
+			await Model.query(raw("(#fn = :a OR #fn = :b) AND #id = :id", {"#id": "id", "#fn": "favoriteNumber"}, {":id": 1, ":a": 1, ":b": 2})).exec();
+			expect(queryParams.KeyConditionExpression).toEqual("#id = :id");
+			expect(queryParams.FilterExpression).toEqual("(#fn = :a OR #fn = :b)");
+		});
+
+		it("Should accept a raw condition without attribute name placeholders", async () => {
+			await Model.query(raw("id = :id", {}, {":id": 1})).exec();
+			expect(queryParams).toEqual({"TableName": "Cat", "KeyConditionExpression": "id = :id", "ExpressionAttributeValues": {":id": {"N": "1"}}});
+		});
+
+		it("Should not split a parenthesized expression joined with OR", async () => {
+			await expect(Model.query(raw("(#id = :id) OR (#fn = :fn)", {"#id": "id", "#fn": "favoriteNumber"}, {":id": 1, ":fn": 5})).exec()).rejects.toEqual(new CustomError.InvalidParameter("Index can't be found for query."));
+		});
+
 		it("Should not split an expression joined with OR", async () => {
 			await expect(Model.query(raw("#id = :id OR #fn = :fn", {"#id": "id", "#fn": "favoriteNumber"}, {":id": 1, ":fn": 5})).exec()).rejects.toEqual(new CustomError.InvalidParameter("Index can't be found for query."));
 		});
