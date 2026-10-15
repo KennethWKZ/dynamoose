@@ -60,3 +60,9 @@ const shouldFailWithInvalidReturnItems = dynamoose.transaction([AccountModel.tra
 const shouldFailWithReturnItemsAndReturnRequest = dynamoose.transaction([AccountModel.transaction.create({"id": 1, "balance": 0})], {"return": TransactionReturnOptions.request, "returnItems": true});
 const shouldPassWithReturnRequestAndReturnItemsFalse = dynamoose.transaction([AccountModel.transaction.create({"id": 1, "balance": 0})], {"return": TransactionReturnOptions.request, "returnItems": false});
 
+
+const shouldPassWithReturnValuesOnConditionCheckFailure = dynamoose.transaction([AccountModel.transaction.create({"id": 1, "balance": 0})], {"returnValuesOnConditionCheckFailure": "ALL_OLD"});
+const shouldPassWithReturnValuesOnConditionCheckFailureAndReturnItems: Promise<[Account]> = dynamoose.transaction<[Account]>([AccountModel.transaction.create({"id": 1, "balance": 0})], {"returnValuesOnConditionCheckFailure": "NONE", "returnItems": true});
+const shouldPassWithReturnValuesOnConditionCheckFailureAndReturnRequest = dynamoose.transaction([AccountModel.transaction.create({"id": 1, "balance": 0})], {"return": TransactionReturnOptions.request, "returnValuesOnConditionCheckFailure": "ALL_OLD"});
+// @ts-expect-error
+const shouldFailWithInvalidReturnValuesOnConditionCheckFailure = dynamoose.transaction([AccountModel.transaction.create({"id": 1, "balance": 0})], {"returnValuesOnConditionCheckFailure": "ALL_NEW"});

@@ -49,6 +49,24 @@ export interface TransactionSettings {
 	 * If the write succeeds but the written items can't be returned (reading them back fails, or a `get` function throws), the promise rejects with an error whose `name` is `TransactionReadError`. Its `committed` property is `true` and its `cause` property is the original error. The data is saved, so don't retry the write: a retried `create` fails because the item exists, and a retried `$ADD` is applied twice.
 	 */
 	returnItems?: boolean;
+	/**
+	 * Set to `ALL_OLD` to have DynamoDB return the stored item when a write in the transaction fails its condition. Dynamoose passes it as `ReturnValuesOnConditionCheckFailure` on every `create` (`Put`), `update` (`Update`), `delete` (`Delete`) and `condition` (`ConditionCheck`) request that has a condition, unless the request already sets it. `NONE` is DynamoDB's default. DynamoDB doesn't use read capacity to return the item.
+	 *
+	 * If a condition fails, the transaction rejects with DynamoDB's `TransactionCanceledException` as before. Dynamoose adds a `conditionCheckFailureItems` property to that error: an array with one entry per object in `transactions`, in the same order. An entry is the stored item for a request whose condition failed while the item existed, as `Model.get` would return it, and `undefined` for every other request, including a failed condition on an item that doesn't exist. Dynamoose adds the property whenever DynamoDB returns a stored item, also for a request that sets `ReturnValuesOnConditionCheckFailure` itself. If a returned item can't be converted (for example a `get` function throws), the error is thrown without the property; the raw items are still in `CancellationReasons`.
+	 *
+	 * ```js
+	 * try {
+	 * 	await dynamoose.transaction([
+	 * 		Charge.transaction.create({"id": "charge1", "amount": 100}),
+	 * 		User.transaction.update({"id": "user1"}, {"$ADD": {"balance": -100}}, {"condition": new dynamoose.Condition("version").eq(3)})
+	 * 	], {"returnValuesOnConditionCheckFailure": "ALL_OLD"});
+	 * } catch (error) {
+	 * 	const [existingCharge, user] = error.conditionCheckFailureItems ?? [];
+	 * 	// `existingCharge` is set if charge1 already exists. `user` is set if user1 exists with another version.
+	 * }
+	 * ```
+	 */
+	returnValuesOnConditionCheckFailure?: DynamoDB.ReturnValuesOnConditionCheckFailure;
 }
 
 export type GetTransactionInput = {Get: DynamoDB.GetItemInput};
@@ -98,8 +116,19 @@ function Transaction (transactions: Transactions, settings?: TransactionSettings
 
 		const transactionObjects = await Promise.all(transactions);
 
+		const {returnValuesOnConditionCheckFailure} = settings;
+		if (returnValuesOnConditionCheckFailure !== undefined && !["ALL_OLD", "NONE"].includes(returnValuesOnConditionCheckFailure)) {
+			throw new Error.InvalidParameter("Invalid returnValuesOnConditionCheckFailure option, please pass in \"ALL_OLD\" or \"NONE\".");
+		}
 		const transactionParams = {
-			"TransactItems": transactionObjects
+			// Copies the requests that get the setting, so the objects passed in are unchanged.
+			"TransactItems": returnValuesOnConditionCheckFailure === undefined ? transactionObjects : transactionObjects.map((transaction) => {
+				const [[key, value]] = Object.entries(transaction) as [string, TransactionValue & {ConditionExpression?: string; ReturnValuesOnConditionCheckFailure?: string}][];
+				if (key === "Get" || !value.ConditionExpression || value.ReturnValuesOnConditionCheckFailure !== undefined) {
+					return transaction;
+				}
+				return {[key]: {...value, "ReturnValuesOnConditionCheckFailure": returnValuesOnConditionCheckFailure}} as Transaction;
+			})
 		};
 
 		if (settings.return === TransactionReturnOptions.request) {
@@ -160,8 +189,20 @@ function Transaction (transactions: Transactions, settings?: TransactionSettings
 			return new model.Item(attributes, {"type": "fromDynamo"}).conformToSchema({"customTypesDynamo": true, "checkExpiredItem": checkExpiredItem, "saveUnknown": true, "modifiers": ["get"], "type": "fromDynamo", "mapAttributes": true});
 		};
 
-		// TODO: remove `as any` here (https://stackoverflow.com/q/61111476/894067)
-		const result: any = await ddb(instance, transactionType as any, transactionParams as any);
+		let result: any;
+		try {
+			// TODO: remove `as any` here (https://stackoverflow.com/q/61111476/894067)
+			result = await ddb(instance, transactionType as any, transactionParams as any);
+		} catch (error) {
+			// With `ReturnValuesOnConditionCheckFailure: ALL_OLD`, a cancellation reason holds the stored item of a request whose condition failed.
+			const reasons: DynamoDB.CancellationReason[] | undefined = error?.name === "TransactionCanceledException" ? error.CancellationReasons : undefined;
+			if (Array.isArray(reasons) && reasons.some((reason) => reason?.Item)) {
+				try {
+					error.conditionCheckFailureItems = await Promise.all(reasons.map((reason, index) => reason?.Item ? toItem(reason.Item, tableNames[index], transactionObjects[index][transactionModel], false) : undefined));
+				} catch (conversionError) {} // eslint-disable-line no-empty
+			}
+			throw error;
+		}
 		if (result.Responses) {
 			return Promise.all(result.Responses.map((item: any, index: number) => toItem(item.Item, tableNames[index])));
 		}
