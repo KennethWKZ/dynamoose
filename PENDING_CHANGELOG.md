@@ -26,6 +26,7 @@
 ### Performance
 
 - Improved performance of converting items returned from `scan` and `query` (~2x faster on large result sets). `Schema` now memoizes `attributes`, `getAttributeValue`, `getAttributeType`, and `getAttributeTypeDetails` per schema, and object flattening no longer re-walks each nested value's subtree to detect circular references
+- Improved performance of `Model.update` on items with many nested attributes when the schema has nested `required` attributes (~460x faster for a 2,000 element list: 24.6 s to 54 ms). The update flattened the whole item once for every attribute it checked; it now flattens it once
 - Improved performance of items containing a long list of attributes with multiple possible types (~4x faster for a 800 element list). Building the type paths for such an item no longer copies the accumulated result once per element
 
 ### Bug Fixes
