@@ -67,9 +67,12 @@ describe("Query", () => {
 			expect(Model.query().exec).toBeInstanceOf(Function);
 		});
 
-		it("Should return a promise", () => {
+		it("Should return a promise", async () => {
 			queryPromiseResolver = () => ({"Items": []});
-			expect(Model.query("name").eq("Charlie").exec()).toBeInstanceOf(Promise);
+			const promise = Model.query("name").eq("Charlie").exec();
+			expect(promise).toBeInstanceOf(Promise);
+			// Wait for the request, which would otherwise reach DynamoDB after this test removes the mock.
+			await promise;
 		});
 
 		const functionCallTypes = [
@@ -2214,6 +2217,12 @@ describe("Query", () => {
 
 		it("Should not split a parenthesized expression joined with OR", async () => {
 			await expect(Model.query(raw("(#id = :id) OR (#fn = :fn)", {"#id": "id", "#fn": "favoriteNumber"}, {":id": 1, ":fn": 5})).exec()).rejects.toEqual(new CustomError.InvalidParameter("Index can't be found for query."));
+		});
+
+		it("Should leave a part whose placeholder isn't in ExpressionAttributeNames in the FilterExpression", async () => {
+			await Model.query(raw("#id = :id AND #missing = :m", {"#id": "id"}, {":id": 1, ":m": 2})).exec();
+			expect(queryParams.KeyConditionExpression).toEqual("#id = :id");
+			expect(queryParams.FilterExpression).toEqual("#missing = :m");
 		});
 
 		it("Should not split an expression joined with OR", async () => {
