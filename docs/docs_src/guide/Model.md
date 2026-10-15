@@ -326,6 +326,8 @@ You can also pass in a `settings` object parameter to define extra settings for 
 | returnValues | Set which documents to return after the update. This setting will be passed into the DynamoDB `ReturnValues` parameter. | String | `ALL_NEW`
 | merge | Set to `true` to update nested objects in place using document paths instead of replacing the whole attribute. See [Updating nested objects](#updating-nested-objects) below. | Boolean | `false`
 
+If the schema has `timestamps`, `update` sets each `updatedAt` attribute to the current time, and sets each `createdAt` attribute with `if_not_exists`. DynamoDB creates the item if it doesn't exist, so an update that creates the item stores both timestamps with the same value, and an update to an existing item keeps its `createdAt`. An existing item that has no `createdAt` gets the time of that update. A timestamp attribute you set, add to or remove in `updateObj` is updated as you specify instead.
+
 There are two different methods for specifying what you'd like to edit in the item. The first is you can just pass in the attribute name as the key, and the new value as the value. This will set the given attribute to the new value.
 
 ```js
