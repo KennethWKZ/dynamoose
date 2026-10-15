@@ -1533,6 +1533,71 @@ describe("Model", () => {
 					expect(result.RequestItems.User.Keys.length).toEqual(150);
 				});
 
+				it("Should combine the unprocessed keys of several requests", async () => {
+					dynamoose.aws.ddb.set({
+						"batchGetItem": (request) => {
+							const [first, ...rest] = request.RequestItems.User.Keys;
+							return Promise.resolve({
+								"Responses": {"User": rest.map((key) => ({"id": key.id, "name": {"S": `n${key.id.N}`}}))},
+								"UnprocessedKeys": {"User": {"Keys": [first]}}
+							});
+						}
+					});
+					const result = await callType.func(User).bind(User)(Array.from({"length": 250}, (_, index) => index + 1));
+					expect(result.length).toEqual(247);
+					expect(result.unprocessedKeys.map((item) => item.id)).toEqual([1, 101, 201]);
+				});
+
+				it("Should treat a response without Responses or UnprocessedKeys as returning nothing", async () => {
+					dynamoose.aws.ddb.set({"batchGetItem": () => Promise.resolve({})});
+					const result = await callType.func(User).bind(User)(Array.from({"length": 150}, (_, index) => index + 1));
+					expect(result.length).toEqual(0);
+					expect(result.unprocessedKeys).toEqual([]);
+				});
+
+				it("Should match binary keys by their bytes", async () => {
+					const Binary = dynamoose.model("Binary", {"id": Buffer, "name": String});
+					new dynamoose.Table("Binary", [Binary]);
+					dynamoose.aws.ddb.set({
+						"batchGetItem": (request) => Promise.resolve({
+							// DynamoDB returns new binary values, in any order.
+							"Responses": {"Binary": [...request.RequestItems.Binary.Keys].reverse().map((key) => ({"id": {"B": Buffer.from(key.id.B)}, "name": {"S": `n${Buffer.from(key.id.B).toString()}`}}))},
+							"UnprocessedKeys": {}
+						})
+					});
+					const result = await callType.func(Binary).bind(Binary)([{"id": Buffer.from("a")}, {"id": Buffer.from("b")}]);
+					expect(result.map((item) => item.name)).toEqual(["na", "nb"]);
+				});
+
+				it("Should return the item for a key that leaves out the range key", async () => {
+					const Order = dynamoose.model("Order", {"id": {"type": Number, "hashKey": true}, "sk": {"type": String, "rangeKey": true}, "name": String});
+					new dynamoose.Table("Order", [Order]);
+					dynamoose.aws.ddb.set({"batchGetItem": () => Promise.resolve({"Responses": {"Order": [{"id": {"N": "1"}, "name": {"S": "Bob"}}]}, "UnprocessedKeys": {}})});
+					const result = await callType.func(Order).bind(Order)([{"id": 1}]);
+					expect(result.map((item) => ({...item}))).toEqual([{"id": 1, "name": "Bob"}]);
+				});
+
+				it("Should wait up to 100 milliseconds before the first retry by default", async () => {
+					let calls = 0;
+					dynamoose.aws.ddb.set({
+						"batchGetItem": (request) => Promise.resolve(++calls === 1 ? {"Responses": {"User": []}, "UnprocessedKeys": {"User": request.RequestItems.User}} : {"Responses": {"User": [{"id": {"N": "1"}, "name": {"S": "Bob"}}]}, "UnprocessedKeys": {}})
+					});
+					const random = jest.spyOn(Math, "random").mockReturnValue(0.5);
+					try {
+						const start = Date.now();
+						const result = await callType.func(User).bind(User)([1], {"retryUnprocessed": {"attempts": 1}});
+						expect(Date.now() - start).toBeGreaterThanOrEqual(45);
+						expect(calls).toEqual(2);
+						expect(result.map((item) => item.id)).toEqual([1]);
+					} finally {
+						random.mockRestore();
+					}
+				});
+
+				it("Should throw an error for a retryUnprocessed of null", () => {
+					return expect(callType.func(User).bind(User)([1], {"retryUnprocessed": null})).rejects.toEqual(new CustomError.InvalidParameter("retryUnprocessed.attempts must be a whole number of 0 or more, and retryUnprocessed.delay a number of milliseconds of 0 or more."));
+				});
+
 				it("Should should throw an error if table not initialized", async () => {
 					const Movie = dynamoose.model("Movie", {"id": Number, "name": String});
 					new dynamoose.Table("Movie", [Movie], {
@@ -2505,6 +2570,12 @@ describe("Model", () => {
 					const result = await callType.func(User).bind(User)(Array.from({"length": 30}, (_, index) => ({"id": index + 1, "name": `n${index + 1}`})));
 					expect(calls.map((call) => call.RequestItems.User.length)).toEqual([25, 5]);
 					expect(result.unprocessedItems.map((item) => item.id)).toEqual([3, 27]);
+				});
+
+				it("Should treat a response without UnprocessedItems as writing everything", async () => {
+					dynamoose.aws.ddb.set({"batchWriteItem": () => Promise.resolve({})});
+					const result = await callType.func(User).bind(User)(Array.from({"length": 30}, (_, index) => ({"id": index + 1})));
+					expect(result).toEqual({"unprocessedItems": []});
 				});
 
 				it("Should reject with the error of a later request", async () => {
