@@ -262,7 +262,8 @@ ItemRetriever.prototype.getRequest = async function (this: ItemRetriever): Promi
 		}
 	}
 	function moveParameterNames (val, prefix): void {
-		const entry = Object.entries(object.ExpressionAttributeNames).find((entry) => entry[1] === val);
+		// Only names Dynamoose made (`#a0`) move; a raw condition in a group keeps its own names in the filter.
+		const entry = Object.entries(object.ExpressionAttributeNames).find((entry) => (/^#a\d+$/).test(entry[0]) && entry[1] === val);
 		if (!entry) {
 			return;
 		}

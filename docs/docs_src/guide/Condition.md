@@ -41,6 +41,16 @@ new dynamoose.Condition({
 })
 ```
 
+To combine a raw condition with conditions built with methods, pass it to `condition.parenthesis()` or `condition.group()`. It is sent in parentheses, with its own names and values. A query's key conditions must be outside it, built with methods. Dynamoose numbers its own names and values (`#a0`, `:v0`) after any of that form the raw condition uses, and two raw conditions can share a placeholder only for the same name or value.
+
+```js
+new dynamoose.Condition().where("userId").eq("1").parenthesis(new dynamoose.Condition({
+	"FilterExpression": "size(#templates) <> :size",
+	"ExpressionAttributeNames": {"#templates": "templates"},
+	"ExpressionAttributeValues": {":size": 0}
+})); // #a0 = :v0 AND (size(#templates) <> :size)
+```
+
 ## condition.and()
 
 dyno_jsdoc_dist/Condition.js|condition.and()
