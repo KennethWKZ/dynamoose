@@ -126,6 +126,11 @@ export const UserModel = dynamoose.model(
 	userSchema
 );
 
+const shouldResolveItemFromDynamo: Promise<User | undefined> = UserTypedModel.itemFromDynamo({"id": {"N": "1"}});
+// A stream image in a Lambda event, typed as `@types/aws-lambda` types it.
+declare const lambdaStreamImage: {[key: string]: {B?: string; N?: string; S?: string; L?: {S?: string}[]; M?: {[key: string]: {N?: string}}}} | undefined;
+const shouldResolveItemFromLambdaStreamImage: Promise<User | undefined> = UserTypedModel.itemFromDynamo(lambdaStreamImage);
+
 UserTypedModel.update({"id": "foo"}, {
 	"$SET":{"name":"foo"}
 });

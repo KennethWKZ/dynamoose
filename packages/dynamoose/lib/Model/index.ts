@@ -165,6 +165,44 @@ type DeleteTransactionResult = Promise<DeleteTransactionInput>;
 type UpdateTransactionResult = Promise<UpdateTransactionInput>;
 type ConditionTransactionResult = Promise<ConditionTransactionInput>;
 
+/**
+ * An attribute value of a DynamoDB Stream image in a Lambda event, as `@types/aws-lambda` types it: every property is optional, and a binary value is a base64 string.
+ */
+export interface StreamAttributeValue {
+	B?: string | Uint8Array;
+	BS?: (string | Uint8Array)[];
+	BOOL?: boolean;
+	L?: StreamAttributeValue[];
+	M?: {[key: string]: StreamAttributeValue};
+	N?: string;
+	NS?: string[];
+	NULL?: boolean;
+	S?: string;
+	SS?: string[];
+}
+// A Lambda event is JSON, so a stream image in it holds binary values as base64 strings. The AWS SDK holds them as bytes, which is what conversion expects.
+const binaryFromBase64 = (value: any): any => {
+	if (!value || typeof value !== "object") {
+		return value;
+	}
+	if (typeof value.B === "string") {
+		return {"B": Buffer.from(value.B, "base64")};
+	}
+	if (Array.isArray(value.BS)) {
+		return {"BS": value.BS.map((binary) => typeof binary === "string" ? Buffer.from(binary, "base64") : binary)};
+	}
+	if (Array.isArray(value.L)) {
+		return {"L": value.L.map(binaryFromBase64)};
+	}
+	if (value.M && typeof value.M === "object") {
+		return {"M": Object.keys(value.M).reduce((map, key) => {
+			map[key] = binaryFromBase64(value.M[key]);
+			return map;
+		}, {})};
+	}
+	return value;
+};
+
 export interface GetTransaction {
 	(key: InputKey): GetTransactionResult;
 	(key: InputKey, settings?: ModelGetSettings): GetTransactionResult;
@@ -587,6 +625,37 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 	 */
 	table (): Table {
 		return this.getInternalProperties(internalProperties).table();
+	}
+
+	/**
+	 * This function converts an item in DynamoDB's format, such as the `NewImage` or `OldImage` of a DynamoDB Stream record or an `Item` from an AWS SDK call, into an item of this model. The item looks the same as `Model.get` would return it: custom types such as `Date` are converted by their `storage` setting, `get` functions and `map` names are applied, and Sets are Sets.
+	 *
+	 * Unlike `Model.get`, it returns the item even if its `expires` time has passed, because the image is what was stored. It returns `undefined` for `undefined` (for example the `NewImage` of a `REMOVE` record). A binary value can be bytes, as the AWS SDK returns it, or a base64 string, as a Lambda event has it.
+	 *
+	 * ```js
+	 * export const handler = async (event) => {
+	 * 	for (const record of event.Records) {
+	 * 		const user = await User.itemFromDynamo(record.dynamodb.NewImage);
+	 * 		console.log(user?.createdAt); // A Date, not epoch milliseconds
+	 * 	}
+	 * };
+	 * ```
+	 * @param attributes An item in DynamoDB's attribute value format, such as `{"id": {"N": "1"}}`.
+	 * @returns Promise<Item | undefined>
+	 */
+	async itemFromDynamo (attributes: AttributeMap | {[key: string]: StreamAttributeValue} | undefined): Promise<T | undefined> {
+		if (attributes === undefined || attributes === null) {
+			return undefined;
+		}
+		const isDynamoItem = typeof attributes === "object" && Object.values(attributes).every((value) => this.Item.isDynamoObject({"key": value}));
+		if (!isDynamoItem) {
+			throw new CustomError.InvalidParameter("itemFromDynamo takes an item in DynamoDB's format, such as {\"id\": {\"N\": \"1\"}}.");
+		}
+		const item = utils.deep_copy(attributes);
+		Object.keys(item).forEach((key) => {
+			item[key] = binaryFromBase64(item[key]);
+		});
+		return new this.Item(item as any, {"type": "fromDynamo"}).conformToSchema({"customTypesDynamo": true, "checkExpiredItem": false, "saveUnknown": true, "modifiers": ["get"], "type": "fromDynamo", "mapAttributes": true}) as Promise<T>;
 	}
 
 	// originalName: string; // Name without prefixes

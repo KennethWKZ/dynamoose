@@ -12,6 +12,10 @@ dyno_jsdoc_dist/Model/index.js|model.name
 
 dyno_jsdoc_dist/Model/index.js|model.table
 
+## model.itemFromDynamo(attributes)
+
+dyno_jsdoc_dist/Model/index.js|model.itemFromDynamo
+
 ## model.get(key[, settings][, callback])
 
 You can use Model.get to retrieve an item from DynamoDB. This method uses the `getItem` DynamoDB API call to retrieve the object.
