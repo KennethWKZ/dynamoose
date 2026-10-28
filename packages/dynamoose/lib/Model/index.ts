@@ -963,6 +963,10 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				if (utils.is_plain_object(val) && Object.keys(val).length > 0) {
 					index++;
 					flattenForMerge(pathParts, val, acc, setOperator);
+				} else if (val === undefined || val === type.UNDEFINED) {
+					// A property set to `undefined` has no value to set, so its document path is removed, as a top level attribute is.
+					acc.UpdateExpression.REMOVE.push(pathParts.join("."));
+					index++;
 				} else {
 					const valueKey = `:v${index}`;
 					acc.ExpressionAttributeValues[valueKey] = val;
@@ -1016,26 +1020,36 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 						const schemaSettings = {...updateType.objectFromSchemaSettings, "type": "toDynamo", "customTypesDynamo": true, "saveUnknown": true, "mapAttributes": true, "required": false};
 						const processed = (await this.Item.objectFromSchema({[subKey]: subValue}, this, schemaSettings as any))[subKey];
 						accumulator.ExpressionAttributeNames[`#a${index}`] = subKey;
-						(function flatten (path: string, obj: ObjectType): void {
+						const removedAttributes: string[] = [];
+						(function flatten (path: string, attributePath: string, obj: ObjectType): void {
 							for (const [attr, val] of Object.entries(obj)) {
 								accumulator.ExpressionAttributeNames[`#a${index}`] = attr;
 								const k = `${path}.#a${index++}`;
 								// Only plain objects map to a nested document path. Recursing into other objects (arrays, Sets, Buffers) would emit paths keyed by array indices or byte offsets.
 								if (utils.is_plain_object(val) && Object.keys(val).length > 0) {
-									flatten(k, val);
+									flatten(k, `${attributePath}.${attr}`, val);
+								} else if (val === undefined || val === type.UNDEFINED) {
+									// A property set to `undefined` has no value to set, so its document path is removed, as a top level attribute is.
+									removedAttributes.push(`${attributePath}.${attr}`);
+									accumulator.UpdateExpression["REMOVE"].push(k);
 								} else {
 									accumulator.ExpressionAttributeValues[`:v${index}`] = val;
 									accumulator.UpdateExpression["SET"].push(`${k} = :v${index++}`);
 								}
 							}
-						})(`#a${index++}`, processed);
+						})(`#a${index++}`, subKey, processed);
+						for (const attribute of removedAttributes) {
+							await schema.requiredCheck(attribute, undefined);
+						}
 						continue;
 					}
 
 					const attributeExists = schema.attributes().includes(subKey);
 					const dynamooseUndefined = type.UNDEFINED;
 					if (!updateType.attributeOnly && subValue !== dynamooseUndefined) {
-						subValue = (await this.Item.objectFromSchema({[subKey]: dynamoType === "L" && !Array.isArray(subValue) ? [subValue] : subValue}, this, {"type": "toDynamo", "customTypesDynamo": true, "saveUnknown": true, "mapAttributes": true, ...updateType.objectFromSchemaSettings} as any))[subKey];
+						// A single value for a list attribute is wrapped in a list (so `$ADD` appends it). `undefined` is not wrapped, so it is removed below as it is for any other attribute.
+						const wrapInList = dynamoType === "L" && subValue !== undefined && !Array.isArray(subValue);
+						subValue = (await this.Item.objectFromSchema({[subKey]: wrapInList ? [subValue] : subValue}, this, {"type": "toDynamo", "customTypesDynamo": true, "saveUnknown": true, "mapAttributes": true, ...updateType.objectFromSchemaSettings} as any))[subKey];
 					}
 
 					if (subValue === dynamooseUndefined || subValue === undefined) {
