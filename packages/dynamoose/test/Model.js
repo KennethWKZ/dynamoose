@@ -2922,9 +2922,12 @@ describe("Model", () => {
 							},
 							":v1": {
 								"L": [{"S": "hello world"}]
+							},
+							":v2": {
+								"L": []
 							}
 						},
-						"UpdateExpression": "SET #a0 = :v0, #a1 = list_append(#a1, :v1)",
+						"UpdateExpression": "SET #a0 = :v0, #a1 = list_append(if_not_exists(#a1, :v2), :v1)",
 						"Key": {
 							"id": {
 								"N": "1"
@@ -3607,9 +3610,12 @@ describe("Model", () => {
 						"ExpressionAttributeValues": {
 							":v0": {
 								"L": [{"S": "Tim"}]
+							},
+							":v1": {
+								"L": []
 							}
 						},
-						"UpdateExpression": "SET #a0 = list_append(#a0, :v0)",
+						"UpdateExpression": "SET #a0 = list_append(if_not_exists(#a0, :v1), :v0)",
 						"Key": {
 							"id": {
 								"N": "1"
@@ -3633,9 +3639,154 @@ describe("Model", () => {
 						"ExpressionAttributeValues": {
 							":v0": {
 								"L": [{"S": "Tim"}, {"S": "Charlie"}]
+							},
+							":v1": {
+								"L": []
 							}
 						},
-						"UpdateExpression": "SET #a0 = list_append(#a0, :v0)",
+						"UpdateExpression": "SET #a0 = list_append(if_not_exists(#a0, :v1), :v0)",
+						"Key": {
+							"id": {
+								"N": "1"
+							}
+						},
+						"TableName": "User",
+						"ReturnValues": "ALL_NEW"
+					});
+				});
+
+				it("Should send correct params to updateItem with $ADD for list append to multiple list properties", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "friends": {"type": Array, "schema": [String]}, "enemies": {"type": Array, "schema": [String]}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$ADD": {"friends": "Tim", "enemies": ["Bob"]}});
+					expect(updateItemParams).toBeInstanceOf(Object);
+					expect(updateItemParams).toEqual({
+						"ExpressionAttributeNames": {
+							"#a0": "friends",
+							"#a1": "enemies"
+						},
+						"ExpressionAttributeValues": {
+							":v0": {
+								"L": [{"S": "Tim"}]
+							},
+							":v1": {
+								"L": [{"S": "Bob"}]
+							},
+							":v2": {
+								"L": []
+							}
+						},
+						"UpdateExpression": "SET #a0 = list_append(if_not_exists(#a0, :v2), :v0), #a1 = list_append(if_not_exists(#a1, :v2), :v1)",
+						"Key": {
+							"id": {
+								"N": "1"
+							}
+						},
+						"TableName": "User",
+						"ReturnValues": "ALL_NEW"
+					});
+				});
+
+				it("Should send correct params to updateItem with $ADD for list append followed by a set property", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "friends": {"type": Array, "schema": [String]}, "tags": {"type": Set, "schema": [String]}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$ADD": {"friends": "Tim"}, "$SET": {"tags": ["a", "b"]}});
+					expect(updateItemParams).toBeInstanceOf(Object);
+					expect(updateItemParams).toEqual({
+						"ExpressionAttributeNames": {
+							"#a0": "friends",
+							"#a1": "tags"
+						},
+						"ExpressionAttributeValues": {
+							":v0": {
+								"L": [{"S": "Tim"}]
+							},
+							":v1": {
+								"SS": ["a", "b"]
+							},
+							":v2": {
+								"L": []
+							}
+						},
+						"UpdateExpression": "SET #a0 = list_append(if_not_exists(#a0, :v2), :v0), #a1 = :v1",
+						"Key": {
+							"id": {
+								"N": "1"
+							}
+						},
+						"TableName": "User",
+						"ReturnValues": "ALL_NEW"
+					});
+				});
+
+				it("Should send correct params to updateItem with $ADD for list append with conditional", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "active": Boolean, "friends": {"type": Array, "schema": [String]}});
+					new dynamoose.Table("User", [User]);
+					const condition = new dynamoose.Condition("active").eq(true);
+					await callType.func(User).bind(User)({"id": 1}, {"$ADD": {"friends": "Tim"}}, {condition});
+					expect(updateItemParams).toBeInstanceOf(Object);
+					expect(updateItemParams).toEqual({
+						"ExpressionAttributeNames": {
+							"#a0": "active",
+							"#a1": "friends"
+						},
+						"ExpressionAttributeValues": {
+							":v0": {
+								"BOOL": true
+							},
+							":v1": {
+								"L": [{"S": "Tim"}]
+							},
+							":v2": {
+								"L": []
+							}
+						},
+						"UpdateExpression": "SET #a1 = list_append(if_not_exists(#a1, :v2), :v1)",
+						"ConditionExpression": "#a0 = :v0",
+						"Key": {
+							"id": {
+								"N": "1"
+							}
+						},
+						"TableName": "User",
+						"ReturnValues": "ALL_NEW"
+					});
+				});
+
+				it("Should send correct params to updateItem with $ADD for list append with combine properties", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "data1": String, "data2": String, "combine": {"type": {"value": "Combine", "settings": {"attributes": ["data1", "data2"]}}}, "friends": {"type": Array, "schema": [String]}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"data1": "hello", "data2": "world", "$ADD": {"friends": "Tim"}});
+					expect(updateItemParams).toBeInstanceOf(Object);
+					expect(updateItemParams).toEqual({
+						"ExpressionAttributeNames": {
+							"#a0": "data1",
+							"#a1": "data2",
+							"#a2": "friends",
+							"#a3": "combine"
+						},
+						"ExpressionAttributeValues": {
+							":v0": {
+								"S": "hello"
+							},
+							":v1": {
+								"S": "world"
+							},
+							":v2": {
+								"L": [{"S": "Tim"}]
+							},
+							":v3": {
+								"S": "hello,world"
+							},
+							":v4": {
+								"L": []
+							}
+						},
+						"UpdateExpression": "SET #a0 = :v0, #a1 = :v1, #a2 = list_append(if_not_exists(#a2, :v4), :v2), #a3 = :v3",
 						"Key": {
 							"id": {
 								"N": "1"
@@ -4485,6 +4636,98 @@ describe("Model", () => {
 					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v2": {"S": "Charlie"}});
 				});
 
+				it("Should give a combine attribute its own placeholder when merging a nested object with {merge: true}", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "data1": String, "data2": String, "combine": {"type": {"value": "Combine", "settings": {"attributes": ["data1", "data2"]}}}, "config": {"type": Object, "schema": {"timeout": Number}}});
+					new dynamoose.Table("User", [User]);
+
+					await callType.func(User).bind(User)({"id": 1}, {"data1": "hello", "data2": "world", "config": {"timeout": 5}}, {"merge": true});
+					expect(updateItemParams).toBeInstanceOf(Object);
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0 = :v0, #a1 = :v1, #a2.#a3 = :v4, #a5 = :v5");
+					expect(updateItemParams.ExpressionAttributeNames).toEqual({"#a0": "data1", "#a1": "data2", "#a2": "config", "#a3": "timeout", "#a5": "combine"});
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"S": "hello"}, ":v1": {"S": "world"}, ":v4": {"N": "5"}, ":v5": {"S": "hello,world"}});
+				});
+
+				it("Should give the empty list of a list append its own placeholder when merging a nested object with {merge: true}", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "friends": {"type": Array, "schema": [String]}, "config": {"type": Object, "schema": {"timeout": Number}}});
+					new dynamoose.Table("User", [User]);
+
+					await callType.func(User).bind(User)({"id": 1}, {"$ADD": {"friends": "Tim"}, "config": {"timeout": 5}}, {"merge": true});
+					expect(updateItemParams).toBeInstanceOf(Object);
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0 = list_append(if_not_exists(#a0, :v4), :v0), #a1.#a2 = :v3");
+					expect(updateItemParams.ExpressionAttributeNames).toEqual({"#a0": "friends", "#a1": "config", "#a2": "timeout"});
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"L": [{"S": "Tim"}]}, ":v3": {"N": "5"}, ":v4": {"L": []}});
+				});
+
+				it("Should leave a combine attribute as it is when merging a nested property named like a combine property with {merge: true}", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "data1": String, "data2": String, "combine": {"type": {"value": "Combine", "settings": {"attributes": ["data1", "data2"]}}}, "config": {"type": Object, "schema": {"data1": String}}});
+					new dynamoose.Table("User", [User]);
+
+					await callType.func(User).bind(User)({"id": 1}, {"config": {"data1": "x"}}, {"merge": true});
+					expect(updateItemParams).toBeInstanceOf(Object);
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0.#a1 = :v2");
+					expect(updateItemParams.ExpressionAttributeNames).toEqual({"#a0": "config", "#a1": "data1"});
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v2": {"S": "x"}});
+				});
+
+				it("Should throw error if updating one combine property and merging a nested property named like the other with {merge: true}", () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "data1": String, "data2": String, "combine": {"type": {"value": "Combine", "settings": {"attributes": ["data1", "data2"]}}}, "config": {"type": Object, "schema": {"data1": String}}});
+					new dynamoose.Table("User", [User]);
+
+					return expect(callType.func(User).bind(User)({"id": 1}, {"data2": "y", "config": {"data1": "x"}}, {"merge": true})).rejects.toEqual(new CustomError.InvalidParameter("You must update all or none of the combine attributes when running Model.update. Missing combine attributes: data1."));
+				});
+
+				it("Should set a forceDefault property when merging a nested property with the same name with {merge: true}", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "status": {"type": String, "default": "active", "forceDefault": true}, "config": {"type": Object, "schema": {"status": String}}});
+					new dynamoose.Table("User", [User]);
+
+					await callType.func(User).bind(User)({"id": 1}, {"config": {"status": "x"}}, {"merge": true});
+					expect(updateItemParams).toBeInstanceOf(Object);
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0.#a1 = :v2, #a3 = :v3");
+					expect(updateItemParams.ExpressionAttributeNames).toEqual({"#a0": "config", "#a1": "status", "#a3": "status"});
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v2": {"S": "x"}, ":v3": {"S": "active"}});
+				});
+
+				it("Should set a nested forceDefault property when merging its parent with {merge: true}", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "config": {"type": Object, "schema": {"label": String, "timeout": {"type": Number, "default": 5, "forceDefault": true}}}});
+					new dynamoose.Table("User", [User]);
+
+					await callType.func(User).bind(User)({"id": 1}, {"config": {"label": "x"}}, {"merge": true});
+					expect(updateItemParams).toBeInstanceOf(Object);
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0.#a1 = :v2, #a0.#a3 = :v4");
+					expect(updateItemParams.ExpressionAttributeNames).toEqual({"#a0": "config", "#a1": "label", "#a3": "timeout"});
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v2": {"S": "x"}, ":v4": {"N": "5"}});
+				});
+
+				it("Should not write a nested forceDefault property as a top-level attribute when its parent isn't merged with {merge: true}", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "name": String, "config": {"type": Object, "schema": {"label": String, "timeout": {"type": Number, "default": 5, "forceDefault": true}}}});
+					new dynamoose.Table("User", [User]);
+
+					await callType.func(User).bind(User)({"id": 1}, {"name": "Bob"}, {"merge": true});
+					expect(updateItemParams).toBeInstanceOf(Object);
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0 = :v0");
+					expect(updateItemParams.ExpressionAttributeNames).toEqual({"#a0": "name"});
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"S": "Bob"}});
+				});
+
+				it("Should not write a nested forceDefault property when merging a nested property named like its parent with {merge: true}", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "other": {"type": Object, "schema": {"config": String}}, "config": {"type": Object, "schema": {"label": String, "timeout": {"type": Number, "default": 5, "forceDefault": true}}}});
+					new dynamoose.Table("User", [User]);
+
+					await callType.func(User).bind(User)({"id": 1}, {"other": {"config": "y"}}, {"merge": true});
+					expect(updateItemParams).toBeInstanceOf(Object);
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0.#a1 = :v2");
+					expect(updateItemParams.ExpressionAttributeNames).toEqual({"#a0": "other", "#a1": "config"});
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v2": {"S": "y"}});
+				});
+
 				it("Should treat an array nested in a map as a leaf value", async () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", {"id": Number, "data": {"type": Object, "schema": {"name": String, "tags": {"type": Array, "schema": [String]}}}});
@@ -4864,6 +5107,28 @@ describe("Model", () => {
 					});
 				});
 
+				it("Should not write a nested forceDefault property as a top-level attribute", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "name": String, "config": {"type": Object, "schema": {"label": String, "timeout": {"type": Number, "default": 5, "forceDefault": true}}}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"name": "Bob"});
+					expect(updateItemParams).toBeInstanceOf(Object);
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0 = :v0");
+					expect(updateItemParams.ExpressionAttributeNames).toEqual({"#a0": "name"});
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"S": "Bob"}});
+				});
+
+				it("Should use a nested forceDefault value if modifying its parent property", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "config": {"type": Object, "schema": {"label": String, "timeout": {"type": Number, "default": 5, "forceDefault": true}}}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"config": {"label": "x", "timeout": 1}});
+					expect(updateItemParams).toBeInstanceOf(Object);
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0 = :v0");
+					expect(updateItemParams.ExpressionAttributeNames).toEqual({"#a0": "config"});
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"M": {"label": {"S": "x"}, "timeout": {"N": "5"}}}});
+				});
+
 				it("Shouldn't conform to enum if property isn't being updated", async () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", {"id": Number, "name": {"type": String, "enum": ["Bob", "Tim"]}, "data": String});
@@ -5072,6 +5337,44 @@ describe("Model", () => {
 					});
 				});
 
+				it("Should send correct parameters when updating all combine properties with a forceDefault property", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "data1": String, "data2": String, "combine": {"type": {"value": "Combine", "settings": {"attributes": ["data1", "data2"]}}}, "status": {"type": String, "default": "active", "forceDefault": true}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"data1": "hello", "data2": "world"});
+					expect(updateItemParams).toBeInstanceOf(Object);
+					expect(updateItemParams).toEqual({
+						"ExpressionAttributeNames": {
+							"#a0": "data1",
+							"#a1": "data2",
+							"#a2": "combine",
+							"#a3": "status"
+						},
+						"ExpressionAttributeValues": {
+							":v0": {
+								"S": "hello"
+							},
+							":v1": {
+								"S": "world"
+							},
+							":v2": {
+								"S": "hello,world"
+							},
+							":v3": {
+								"S": "active"
+							}
+						},
+						"UpdateExpression": "SET #a0 = :v0, #a1 = :v1, #a2 = :v2, #a3 = :v3",
+						"Key": {
+							"id": {
+								"N": "1"
+							}
+						},
+						"TableName": "User",
+						"ReturnValues": "ALL_NEW"
+					});
+				});
+
 				it("Should send correct parameters when updating or removing all combine properties", async () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", {"id": Number, "data1": String, "data2": String, "combine": {"type": {"value": "Combine", "settings": {"attributes": ["data1", "data2"]}}}});
@@ -5101,6 +5404,77 @@ describe("Model", () => {
 						"TableName": "User",
 						"ReturnValues": "ALL_NEW"
 					});
+				});
+
+				it("Should send correct parameters when updating none of the combine properties", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "name": String, "data1": String, "data2": String, "combine": {"type": {"value": "Combine", "settings": {"attributes": ["data1", "data2"]}}}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"name": "Bob"});
+					expect(updateItemParams).toBeInstanceOf(Object);
+					expect(updateItemParams).toEqual({
+						"ExpressionAttributeNames": {
+							"#a0": "name"
+						},
+						"ExpressionAttributeValues": {
+							":v0": {
+								"S": "Bob"
+							}
+						},
+						"UpdateExpression": "SET #a0 = :v0",
+						"Key": {
+							"id": {
+								"N": "1"
+							}
+						},
+						"TableName": "User",
+						"ReturnValues": "ALL_NEW"
+					});
+				});
+
+				it("Should send correct parameters when adding to a property that isn't a combine property", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "age": Number, "data1": String, "data2": String, "combine": {"type": {"value": "Combine", "settings": {"attributes": ["data1", "data2"]}}}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$ADD": {"age": 1}});
+					expect(updateItemParams).toBeInstanceOf(Object);
+					expect(updateItemParams).toEqual({
+						"ExpressionAttributeNames": {
+							"#a0": "age"
+						},
+						"ExpressionAttributeValues": {
+							":v0": {
+								"N": "1"
+							}
+						},
+						"UpdateExpression": "ADD #a0 :v0",
+						"Key": {
+							"id": {
+								"N": "1"
+							}
+						},
+						"TableName": "User",
+						"ReturnValues": "ALL_NEW"
+					});
+				});
+
+				it("Should throw error if adding to a combine property", () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "data1": Number, "data2": String, "combine": {"type": {"value": "Combine", "settings": {"attributes": ["data1", "data2"]}}}});
+					new dynamoose.Table("User", [User]);
+
+					return expect(callType.func(User).bind(User)({"id": 1}, {"$ADD": {"data1": 1}})).rejects.toEqual(new CustomError.InvalidParameter("You must update all or none of the combine attributes when running Model.update. Missing combine attributes: data1, data2."));
+				});
+
+				it("Should throw error if adding to a combine property whose placeholder starts another placeholder", () => {
+					updateItemFunction = () => Promise.resolve({});
+					// `data1` is #a1, added to, and the update sets #a10 and #a11, which start with "#a1".
+					const otherAttributes = Array.from({"length": 9}, (_, i) => `other${i + 2}`);
+					User = dynamoose.model("User", {"id": Number, "other0": String, "data1": Number, ...Object.fromEntries(otherAttributes.map((attribute) => [attribute, String])), "data2": String, "combine": {"type": {"value": "Combine", "settings": {"attributes": ["data1", "data2"]}}}});
+					new dynamoose.Table("User", [User]);
+
+					const update = {"other0": "a", "$ADD": {"data1": 1}, ...Object.fromEntries(otherAttributes.map((attribute) => [attribute, "a"])), "data2": "b"};
+					return expect(callType.func(User).bind(User)({"id": 1}, update)).rejects.toEqual(new CustomError.InvalidParameter("You must update all or none of the combine attributes when running Model.update. Missing combine attributes: data1."));
 				});
 
 				it("Should send correct parameters when adding an element to a set", async () => {
@@ -5982,6 +6356,30 @@ describe("Model", () => {
 				expect(await User.transaction.update({"id": 1, "name": "Bob"})).toBeInstanceOf(Object);
 			});
 
+			it("Should return correct result when updating all combine properties with a forceDefault property", async () => {
+				User = dynamoose.model("User", {"id": Number, "data1": String, "data2": String, "combine": {"type": {"value": "Combine", "settings": {"attributes": ["data1", "data2"]}}}, "status": {"type": String, "default": "active", "forceDefault": true}});
+				new dynamoose.Table("User", [User]);
+				expect(await User.transaction.update({"id": 1}, {"data1": "hello", "data2": "world"})).toEqual({
+					"Update": {
+						"Key": {"id": {"N": "1"}},
+						"ExpressionAttributeNames": {
+							"#a0": "data1",
+							"#a1": "data2",
+							"#a2": "combine",
+							"#a3": "status"
+						},
+						"ExpressionAttributeValues": {
+							":v0": {"S": "hello"},
+							":v1": {"S": "world"},
+							":v2": {"S": "hello,world"},
+							":v3": {"S": "active"}
+						},
+						"UpdateExpression": "SET #a0 = :v0, #a1 = :v1, #a2 = :v2, #a3 = :v3",
+						"TableName": "User"
+					}
+				});
+			});
+
 			it("Should return correct result", async () => {
 				expect(await User.transaction.update({"id": 1, "name": "Bob"})).toEqual({
 					"Update": {
@@ -6062,6 +6460,25 @@ describe("Model", () => {
 				});
 			});
 
+			it("Should return correct result with $ADD for list append", async () => {
+				User = dynamoose.model("User", {"id": Number, "friends": {"type": Array, "schema": [String]}});
+				new dynamoose.Table("User", [User]);
+				expect(await User.transaction.update({"id": 1}, {"$ADD": {"friends": "Tim"}})).toEqual({
+					"Update": {
+						"Key": {"id": {"N": "1"}},
+						"ExpressionAttributeNames": {
+							"#a0": "friends"
+						},
+						"ExpressionAttributeValues": {
+							":v0": {"L": [{"S": "Tim"}]},
+							":v1": {"L": []}
+						},
+						"UpdateExpression": "SET #a0 = list_append(if_not_exists(#a0, :v1), :v0)",
+						"TableName": "User"
+					}
+				});
+			});
+
 			it("Should print warning if passing callback", () => {
 				let result;
 				const oldWarn = console.warn; // eslint-disable-line no-console
@@ -6082,6 +6499,24 @@ describe("Model", () => {
 					console.warn = oldWarn; // eslint-disable-line no-console
 				}
 				expect(obj).toEqual({"id": 1, "name": "Bob"});
+			});
+
+			it("Should return correct result when updating none of the combine properties", async () => {
+				User = dynamoose.model("User", {"id": Number, "name": String, "data1": String, "data2": String, "combine": {"type": {"value": "Combine", "settings": {"attributes": ["data1", "data2"]}}}});
+				new dynamoose.Table("User", [User]);
+				expect(await User.transaction.update({"id": 1}, {"name": "Bob"})).toEqual({
+					"Update": {
+						"Key": {"id": {"N": "1"}},
+						"ExpressionAttributeNames": {
+							"#a0": "name"
+						},
+						"ExpressionAttributeValues": {
+							":v0": {"S": "Bob"}
+						},
+						"UpdateExpression": "SET #a0 = :v0",
+						"TableName": "User"
+					}
+				});
 			});
 		});
 

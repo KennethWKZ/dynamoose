@@ -502,6 +502,8 @@ interface AttributeDefinition {
 	/**
 	 * You can set this property to always use the `default` value, even if a value is already set. This can be used for data that will be used as sort or secondary indexes. The default for this property is false.
 	 *
+	 * For a nested attribute, `Model.update` applies the default only when the update writes the attribute's parent object.
+	 *
 	 * ```js
 	 * {
 	 * 	"age": {

@@ -991,6 +991,11 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 
 			// The `createdAt` names set with `if_not_exists`. DynamoDB keeps the stored value, so a combine attribute can't be built from the value sent.
 			const ifNotExistsNames: string[] = [];
+			// The name placeholder (`#aN`) of each top-level attribute the update writes. With `merge: true` the names also hold nested property names, which can match a top-level attribute's name, so top-level attributes are looked up here.
+			const topLevelNameKeys = new Map<string, string>();
+			// The empty list `$ADD` starts from when the item doesn't have the list attribute yet. It is added to the values only if a list is appended to. Its value placeholder is numbered once every other value has one, so until then the expressions hold this marker.
+			const emptyListMarker = "<emptyList>";
+			let usesEmptyList = false;
 			const returnObject = await Object.keys(updateObj).reduce(async (accumulatorPromise, key) => {
 				const accumulator = await accumulatorPromise;
 				let value = updateObj[key];
@@ -1020,6 +1025,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 						const schemaSettings = {...updateType.objectFromSchemaSettings, "type": "toDynamo", "customTypesDynamo": true, "saveUnknown": true, "mapAttributes": true, "required": false};
 						const processed = (await this.Item.objectFromSchema({[subKey]: subValue}, this, schemaSettings as any))[subKey];
 						accumulator.ExpressionAttributeNames[`#a${index}`] = subKey;
+						topLevelNameKeys.set(subKey, `#a${index}`);
 						const removedAttributes: string[] = [];
 						(function flatten (path: string, attributePath: string, obj: ObjectType): void {
 							for (const [attr, val] of Object.entries(obj)) {
@@ -1074,19 +1080,21 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 
 					const shouldMerge = mergeEnabled && updateType.name === "$SET" && utils.is_plain_object(subValue) && Object.keys(subValue).length > 0;
 
+					accumulator.ExpressionAttributeNames[expressionKey] = subKey;
+					topLevelNameKeys.set(subKey, expressionKey);
 					if (shouldMerge) {
-						accumulator.ExpressionAttributeNames[expressionKey] = subKey;
 						index++;
 						flattenForMerge([expressionKey], subValue, accumulator, updateType.operator);
 					} else {
 						let expressionValue = updateType.attributeOnly ? "" : `:v${index}`;
-						accumulator.ExpressionAttributeNames[expressionKey] = subKey;
 						if (!updateType.attributeOnly) {
 							accumulator.ExpressionAttributeValues[expressionValue] = subValue;
 						}
 
 						if (dynamoType === "L" && updateType.name === "$ADD") {
-							expressionValue = `list_append(${expressionKey}, ${expressionValue})`;
+							// `list_append` fails on an attribute the item doesn't have, so a missing list is appended to as an empty list.
+							expressionValue = `list_append(if_not_exists(${expressionKey}, ${emptyListMarker}), ${expressionValue})`;
+							usesEmptyList = true;
 							updateType = updateTypes.find((a) => a.name === "$SET");
 						}
 
@@ -1132,6 +1140,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 					}
 
 					obj.ExpressionAttributeNames[`#a${index}`] = key;
+					topLevelNameKeys.set(key, `#a${index}`);
 					obj.ExpressionAttributeValues[`:v${index}`] = value;
 					obj.UpdateExpression[updateType.name.slice(1)].push(`#a${index}${updateType.operator}${expressionValue}`);
 
@@ -1152,10 +1161,17 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 
 				return details;
 			}).forEach((details: any) => {
+				// An update that changes none of the combined attributes leaves the combine attribute as it is. One that changes any of them, with any update type, must set or remove all of them.
+				const changesCombinedAttribute = details.type.typeSettings.attributes.some((attribute: string) => topLevelNameKeys.has(attribute));
+				if (!changesCombinedAttribute) {
+					return;
+				}
+
 				const {invalidAttributes} = details.type.typeSettings.attributes.reduce((result, attribute) => {
-					const expressionAttributeNameEntry = Object.entries(returnObject.ExpressionAttributeNames).find((entry) => entry[1] === attribute);
-					const doesExist = Boolean(expressionAttributeNameEntry);
-					const isValid = doesExist && !ifNotExistsNames.includes(expressionAttributeNameEntry[0]) && [...returnObject.UpdateExpression.SET, ...returnObject.UpdateExpression.REMOVE].join(", ").includes(expressionAttributeNameEntry[0]);
+					const expressionAttributeNameKey = topLevelNameKeys.get(attribute);
+					const doesExist = Boolean(expressionAttributeNameKey);
+					// `\b` after the placeholder, so that `#a1` doesn't match inside `#a10`.
+					const isValid = doesExist && !ifNotExistsNames.includes(expressionAttributeNameKey) && new RegExp(`${expressionAttributeNameKey}\\b`, "u").test([...returnObject.UpdateExpression.SET, ...returnObject.UpdateExpression.REMOVE].join(", "));
 
 					if (!isValid) {
 						result.invalidAttributes.push(attribute);
@@ -1167,30 +1183,26 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				if (invalidAttributes.length > 0) {
 					throw new CustomError.InvalidParameter(`You must update all or none of the combine attributes when running Model.update. Missing combine attributes: ${invalidAttributes.join(", ")}.`);
 				} else {
-					const nextIndex = Math.max(...Object.keys(returnObject.ExpressionAttributeNames).map((key) => parseInt(key.replace("#a", "")))) + 1;
-					returnObject.ExpressionAttributeNames[`#a${nextIndex}`] = details.attribute;
-					returnObject.ExpressionAttributeValues[`:v${nextIndex}`] = details.type.typeSettings.attributes.map((attribute) => {
-						const [expressionAttributeNameKey] = Object.entries(returnObject.ExpressionAttributeNames).find((entry) => entry[1] === attribute);
-						return returnObject.ExpressionAttributeValues[expressionAttributeNameKey.replace("#a", ":v")];
-					}).filter((value) => typeof value !== "undefined" && value !== null).join(details.type.typeSettings.separator);
-					returnObject.UpdateExpression.SET.push(`#a${nextIndex} = :v${nextIndex}`);
+					// Numbered from `index` and moves it on, so attributes added after this one (such as `forceDefault` ones) don't reuse the number, and neither does this one reuse a merged document path's value, which is numbered past its name.
+					returnObject.ExpressionAttributeNames[`#a${index}`] = details.attribute;
+					topLevelNameKeys.set(details.attribute, `#a${index}`);
+					returnObject.ExpressionAttributeValues[`:v${index}`] = details.type.typeSettings.attributes.map((attribute) => returnObject.ExpressionAttributeValues[topLevelNameKeys.get(attribute).replace("#a", ":v")]).filter((value) => typeof value !== "undefined" && value !== null).join(details.type.typeSettings.separator);
+					returnObject.UpdateExpression.SET.push(`#a${index} = :v${index}`);
+					index++;
 				}
 			});
 
 			await Promise.all(schema.attributes().map(async (attribute) => {
-				// In merge mode, nested attributes (e.g. "config.timeout") are already handled
-				// by objectFromSchema on the parent object, so skip them here to avoid duplicates.
-				if (mergeEnabled && attribute.includes(".")) {
-					const rootAttr = attribute.split(".")[0];
-					if (Object.values(returnObject.ExpressionAttributeNames).includes(rootAttr)) {
-						return;
-					}
+				// A nested attribute (e.g. "config.timeout") gets its forced default from objectFromSchema when the update writes its parent. Written here, its dotted path would become the name of a new top-level attribute.
+				if (attribute.includes(".")) {
+					return;
 				}
 				const defaultValue = await schema.defaultCheck(attribute, undefined, {"forceDefault": true});
-				if (defaultValue && !Object.values(returnObject.ExpressionAttributeNames).includes(attribute)) {
+				if (defaultValue && !topLevelNameKeys.has(attribute)) {
 					const updateType = updateTypes.find((a) => a.name === "$SET");
 
 					returnObject.ExpressionAttributeNames[`#a${index}`] = attribute;
+					topLevelNameKeys.set(attribute, `#a${index}`);
 					returnObject.ExpressionAttributeValues[`:v${index}`] = defaultValue;
 					returnObject.UpdateExpression[updateType.name.slice(1)].push(`#a${index}${updateType.operator}:v${index}`);
 
@@ -1212,6 +1224,13 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 					returnObject.ExpressionAttributeValues[valueKey] = attributeType.toDynamo(value as any);
 				}
 			});
+
+			// `index` is past every number the update used, including a merged document path's value, which is numbered past its name.
+			if (usesEmptyList) {
+				const emptyListKey = `:v${index++}`;
+				returnObject.ExpressionAttributeValues[emptyListKey] = [];
+				returnObject.UpdateExpression.SET = returnObject.UpdateExpression.SET.map((expression: string) => expression.replace(emptyListMarker, emptyListKey));
+			}
 
 			returnObject.ExpressionAttributeValues = this.Item.objectToDynamo(returnObject.ExpressionAttributeValues);
 			if (Object.keys(returnObject.ExpressionAttributeValues).length === 0) {
