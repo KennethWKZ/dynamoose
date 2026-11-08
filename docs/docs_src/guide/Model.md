@@ -424,6 +424,21 @@ await User.update({"id": 1}, {"name": "Bob", "friends": undefined, "role": undef
 
 This means that an object built with optional properties (for example `{"name": input.name, "friends": input.friends}`) removes every attribute the input leaves out. To leave an attribute unchanged, leave its key out of the update object. To remove an attribute, say so explicitly with `$REMOVE` or [`dynamoose.type.UNDEFINED`](Dynamoose#dynamoosetypeundefined), which removes the attribute even if it has a `default`.
 
+An update with nothing to write (an empty update object, or only attributes that are skipped) throws an `InvalidParameter` error before it is sent, because DynamoDB rejects an empty update expression.
+
+### Models with several schemas
+
+On a model with several schemas, an update follows the rules (`required`, `default`, `forceDefault`, timestamps, `Combine` attributes, and removing an attribute set to `undefined`) of the schema that defines the most of the attributes the update names, by name or alias. When two schemas define as many, the first one is used.
+
+```js
+// schemas: [{"id": String, "a": String}, {"id": String, "b": {"type": String, "required": true}, "c": {"type": String, "default": "none"}}]
+
+await Item.update({"id": "1"}, {"c": undefined}); // SET c = "none", by the second schema
+await Item.update({"id": "1"}, {"b": undefined}); // throws a ValidationError, because the second schema requires b
+```
+
+An attribute can be named by its `alias` (or `aliases` or `map` name) in the update object, as in the key.
+
 ### Updating nested objects
 
 By default, setting an object onto an attribute replaces that whole attribute as a map, so any properties you do not pass in are removed from the item.
