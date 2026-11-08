@@ -473,7 +473,7 @@ export class Item extends InternalPropertiesClass<ItemInternalProperties> {
 		if (settings.return === "request") {
 			if (callback) {
 				const localCallback: CallbackType<DynamoDB.PutItemInput, any> = callback as CallbackType<DynamoDB.PutItemInput, any>;
-				paramsPromise.then((result) => localCallback(null, result)).catch((error) => localCallback(error));
+				paramsPromise.then((result) => localCallback(null, result), (error) => localCallback(error));
 				return;
 			} else {
 				return paramsPromise;
@@ -525,18 +525,25 @@ export class AnyItem extends Item {
 	[key: string]: any;
 }
 
-// Sets a timestamp at `path` in `object`. A `*` part stands for every element of a list, as in the timestamps of a nested Schema in a list (`addresses.*.createdAt`).
-function setTimestamp (object: any, path: string, value: string | number): void {
-	const parts = path.split(".");
-	const listIndex = parts.indexOf("*");
-	if (listIndex === -1) {
-		utils.object.set(object, path, value);
+// Sets a timestamp at the path `parts` in `object`. A `*` part stands for every element of a list, as in the timestamps of a nested Schema in a list (`addresses.*.createdAt`).
+// Nothing is created on the way: a nested Schema's timestamps are only set when the item has an object for that Schema, so an item without it (or with a value of another type) is saved as it is.
+// `keysFor` gives the keys the object can use for a top-level attribute: its name and the names it is mapped to (`map` or `alias`).
+function setTimestamp (object: any, parts: string[], value: string | number, keysFor: (attribute: string) => string[], isTopLevel = true): void {
+	const [part, ...rest] = parts;
+	if (part === "*") {
+		if (Array.isArray(object)) {
+			object.forEach((element) => setTimestamp(element, rest, value, keysFor, false));
+		}
 		return;
 	}
-	// A `*` first, as for the inner list of a list of lists, means `object` is the list.
-	const list = listIndex === 0 ? object : utils.object.get(object, parts.slice(0, listIndex).join("."));
-	if (Array.isArray(list)) {
-		list.filter((element) => element && typeof element === "object").forEach((element) => setTimestamp(element, parts.slice(listIndex + 1).join("."), value));
+	if (!object || typeof object !== "object" || Array.isArray(object)) {
+		return;
+	}
+	const key = (isTopLevel ? keysFor(part) : [part]).find((name) => object[name] !== undefined) ?? part;
+	if (rest.length === 0) {
+		object[key] = value;
+	} else {
+		setTimestamp(object[key], rest, value, keysFor, false);
 	}
 }
 
@@ -560,6 +567,7 @@ Item.prepareForObjectFromSchema = async function<T extends InternalPropertiesCla
 			};
 
 			const timestampProperties = schema.getInternalProperties(internalProperties).getTimestampAttributes();
+			const keysFor = (attribute: string): string[] => [attribute, ...schema.getInternalProperties(internalProperties).getMapSettingValuesForKey(attribute)];
 
 			const createdAtProperties = timestampProperties.filter((val) => val.type === "createdAt");
 			const updatedAtProperties = timestampProperties.filter((val) => val.type === "updatedAt");
@@ -569,12 +577,12 @@ Item.prepareForObjectFromSchema = async function<T extends InternalPropertiesCla
 			const isSettable = (prop: {name: string}): boolean => typeof settings.updateTimestamps === "boolean" || !prop.name.includes(".");
 			if (typeof settings.updateTimestamps === "boolean" ? isNewItem : settings.updateTimestamps.createdAt) {
 				createdAtProperties.filter(isSettable).forEach((prop) => {
-					setTimestamp(object, prop.name, timeResult(prop));
+					setTimestamp(object, prop.name.split("."), timeResult(prop), keysFor);
 				});
 			}
 			if (typeof settings.updateTimestamps === "boolean" || settings.updateTimestamps.updatedAt) {
 				updatedAtProperties.filter(isSettable).forEach((prop) => {
-					setTimestamp(object, prop.name, timeResult(prop));
+					setTimestamp(object, prop.name.split("."), timeResult(prop), keysFor);
 				});
 			}
 		}

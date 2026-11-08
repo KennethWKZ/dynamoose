@@ -120,7 +120,7 @@ abstract class ItemRetriever extends InternalPropertiesClass<ItemRetrieverIntern
 		});
 
 		if (callback) {
-			promise.then((result) => prepareForReturn(result)).then((result) => callback(null, result)).catch((error) => callback(error));
+			promise.then((result) => prepareForReturn(result)).then((result) => callback(null, result), (error) => callback(error));
 		} else {
 			return (async (): Promise<any> => {
 				const result = await promise;
