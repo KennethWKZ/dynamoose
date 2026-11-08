@@ -35,6 +35,7 @@
 
 ### Bug Fixes
 
+- Fixed `Model.get`, `Model.delete`, `Model.batchGet` and `Model.update` putting the attributes a schema's `set` setting adds into the request's `Key` when the key was passed as a value (`Model.get(1)`), so DynamoDB rejected the request with `The provided key element does not match the schema`. Only the hash key is sent now, as for a key passed as an object
 - Fixed `item.save` not setting the timestamps of a nested Schema when the item used the attribute's mapped name (`map` or `alias`). For an attribute holding a nested Schema it threw `Cannot map attribute addr to address because both are defined`, including when saving an item read with `Model.get`, and for a list of nested Schemas the timestamps were left out
 - Fixed a nested Schema whose `timestamps` names are a list (`{"createdAt": ["created", "added"]}`), `null` or a definition with settings, or a Schema nested in another nested Schema where every level has `timestamps`, making every `item.save`, `Model.update` and `Model.transaction.update` throw `Invalid Attribute: 0` or `Invalid Attribute: address.null`
 - Fixed the `timestamps` and `saveUnknown` settings of a nested Schema used as one of an attribute's types (`{"data": [{"type": Object, "schema": addressSchema}, String]}`) not applying, and `item.save` throwing `Cannot read properties of undefined (reading 'schema')` or `Cannot create property 'createdAt' on string` for such an attribute
