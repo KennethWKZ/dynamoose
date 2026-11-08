@@ -106,6 +106,7 @@
 - Fixed `item.save`, `Model.batchPut` and `Model.update` with `{"return": "request"}` and a callback never calling the callback when building the request failed
 - Fixed `condition.ne()`, `query.ne()` and `scan.ne()` missing from the TypeScript types, so TypeScript code couldn't call them although they work at runtime. A comparison method that isn't declared in the types now fails to compile, and `condition.ne()` is documented
 - Fixed `Model.update` and `Model.transaction.update` writing a nested `forceDefault` attribute to a new top-level attribute named after its path (for example `"config.timeout": 5`). Without `merge`, every update wrote it; with `{"merge": true}`, every update that didn't write its parent, unless the update merged a nested property named like the parent. A nested forced default is now applied only when the update writes its parent
+- Fixed `Model.batchGet` with an `attributes` setting that leaves out the table's hash or range key returning no items. DynamoDB returned the items, but without their key attributes they couldn't be matched to the keys, so they were dropped. The key attributes are now requested too, and left out of the returned items unless `attributes` lists them, as `Model.get` does
 
 ### Other
 
