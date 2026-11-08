@@ -36,6 +36,7 @@
 
 ### Bug Fixes
 
+- Fixed `Model.update` and `Model.transaction.update` calling the schema's `validate` setting once for each attribute the update sets, each time with only that attribute, so a function that checked the key (such as `item.id`) or two attributes together rejected every update. It is now called once per update with the key and the attributes the update sets. An update that only uses `$ADD`, `$REMOVE` or `$DELETE` still doesn't call it
 - Fixed `item.save` not setting the timestamps of a nested Schema when the item used the attribute's mapped name (`map` or `alias`). For an attribute holding a nested Schema it threw `Cannot map attribute addr to address because both are defined`, including when saving an item read with `Model.get`, and for a list of nested Schemas the timestamps were left out
 - Fixed a nested Schema whose `timestamps` names are a list (`{"createdAt": ["created", "added"]}`), `null` or a definition with settings, or a Schema nested in another nested Schema where every level has `timestamps`, making every `item.save`, `Model.update` and `Model.transaction.update` throw `Invalid Attribute: 0` or `Invalid Attribute: address.null`
 - Fixed the `timestamps` and `saveUnknown` settings of a nested Schema used as one of an attribute's types (`{"data": [{"type": Object, "schema": addressSchema}, String]}`) not applying, and `item.save` throwing `Cannot read properties of undefined (reading 'schema')` or `Cannot create property 'createdAt' on string` for such an attribute

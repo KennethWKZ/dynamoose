@@ -978,7 +978,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 
 		const getUpdateExpressionObject: () => Promise<any> = async () => {
 			const updateTypes = [
-				{"name": "$SET", "operator": " = ", "objectFromSchemaSettings": {"validate": true, "enum": true, "forceDefault": true, "required": "nested", "modifiers": ["set"]}},
+				{"name": "$SET", "operator": " = ", "objectFromSchemaSettings": {"validate": true, "schemaValidate": false, "enum": true, "forceDefault": true, "required": "nested", "modifiers": ["set"]}},
 				{"name": "$ADD", "objectFromSchemaSettings": {"forceDefault": true}},
 				{"name": "$REMOVE", "attributeOnly": true, "objectFromSchemaSettings": {"required": true, "defaults": true}},
 				{"name": "$DELETE", "objectFromSchemaSettings": {"defaults": true}}
@@ -991,6 +991,8 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 
 			// The `createdAt` names set with `if_not_exists`. DynamoDB keeps the stored value, so a combine attribute can't be built from the value sent.
 			const ifNotExistsNames: string[] = [];
+			// The values the update sets (`$SET`), as sent to DynamoDB. The schema's `validate` is called once with them and the key, since each attribute is converted on its own.
+			const setAttributes: ObjectType = {};
 			// The name placeholder (`#aN`) of each top-level attribute the update writes. With `merge: true` the names also hold nested property names, which can match a top-level attribute's name, so top-level attributes are looked up here.
 			const topLevelNameKeys = new Map<string, string>();
 			// The empty list `$ADD` starts from when the item doesn't have the list attribute yet. It is added to the values only if a list is appended to. Its value placeholder is numbered once every other value has one, so until then the expressions hold this marker.
@@ -1024,6 +1026,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 						&& schema.attributes().some((a) => a.startsWith(`${subKey}.`))) {
 						const schemaSettings = {...updateType.objectFromSchemaSettings, "type": "toDynamo", "customTypesDynamo": true, "saveUnknown": true, "mapAttributes": true, "required": false};
 						const processed = (await this.Item.objectFromSchema({[subKey]: subValue}, this, schemaSettings as any))[subKey];
+						setAttributes[subKey] = processed;
 						accumulator.ExpressionAttributeNames[`#a${index}`] = subKey;
 						topLevelNameKeys.set(subKey, `#a${index}`);
 						const removedAttributes: string[] = [];
@@ -1056,6 +1059,9 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 						// A single value for a list attribute is wrapped in a list (so `$ADD` appends it). `undefined` is not wrapped, so it is removed below as it is for any other attribute.
 						const wrapInList = dynamoType === "L" && subValue !== undefined && !Array.isArray(subValue);
 						subValue = (await this.Item.objectFromSchema({[subKey]: wrapInList ? [subValue] : subValue}, this, {"type": "toDynamo", "customTypesDynamo": true, "saveUnknown": true, "mapAttributes": true, ...updateType.objectFromSchemaSettings} as any))[subKey];
+					}
+					if (updateType.name === "$SET" && subValue !== undefined && subValue !== dynamooseUndefined) {
+						setAttributes[subKey] = subValue;
 					}
 
 					if (subValue === dynamooseUndefined || subValue === undefined) {
@@ -1149,6 +1155,15 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 
 				return obj;
 			})()));
+
+			// The schema's `validate` can't see the stored item, so it gets the key and the attributes the update sets. An update that only adds to or removes attributes isn't validated, as it sets no value.
+			const schemaValidator = schema.getInternalProperties(internalProperties).settings.validate;
+			if (schemaValidator && Object.keys(setAttributes).length > 0) {
+				const item = {...await this.getInternalProperties(internalProperties).convertKeyToObject(keyObj), ...setAttributes};
+				if (!await schemaValidator(item)) {
+					throw new CustomError.ValidationError(`${JSON.stringify(item)} had a schema validation error when trying to save the item.`);
+				}
+			}
 
 			schema.attributes().map((attribute) => ({attribute, "type": schema.getAttributeTypeDetails(attribute)})).filter((item: any) => {
 				return Array.isArray(item.type) ? item.type.some((type) => type.name === "Combine") : item.type.name === "Combine";
