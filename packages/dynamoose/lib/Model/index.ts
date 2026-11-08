@@ -86,15 +86,16 @@ const schemaForUpdate = (schemas: Schema[], updateObj: ObjectType): Schema => {
 	return schemas.reduce((best, schema) => definedCount(schema) > definedCount(best) ? schema : best);
 };
 // The same string for two DynamoDB keys only when they name the same item. A number is compared by its value and a binary value by its bytes, as DynamoDB does.
+// Every item passed in has a value for each key attribute: keys are checked before they are sent, and batchGet asks DynamoDB for the key attributes of the items it returns.
 const keyString = (item: AttributeMap, keyAttributes: string[]): string => JSON.stringify(keyAttributes.map((attribute) => {
 	const value: any = item[attribute];
-	if (value?.N !== undefined) {
+	if (value.N !== undefined) {
 		return {"N": String(Number(value.N))};
 	}
-	if (value?.B !== undefined) {
+	if (value.B !== undefined) {
 		return {"B": Buffer.from(value.B).toString("base64")};
 	}
-	return value ?? null;
+	return value;
 }));
 // DynamoDB rejects a batch request that names one key twice. A batch sent as several requests can't be checked by DynamoDB, so it is checked here before any of it is sent.
 const checkDuplicateKeys = (keys: AttributeMap[], keyAttributes: string[]): void => {
@@ -771,8 +772,12 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 
 		const keyObjects = keys.map(async (key) => this.getInternalProperties(internalProperties).convertKeyToObject(key));
 		const keyAttributes = [this.getInternalProperties(internalProperties).getHashKey(), this.getInternalProperties(internalProperties).getRangeKey()].filter(Boolean);
+		// DynamoDB returns only the attributes it is asked for, and each returned item is matched to its key by the key attributes. So a key attribute that `attributes` leaves out is asked for too, and removed from the item again, as `Model.get` leaves it out.
+		const requestedAttributes = (settings as ModelBatchGetSettings).attributes;
+		const addedKeyAttributes = requestedAttributes ? keyAttributes.filter((attribute) => !requestedAttributes.includes(attribute)) : [];
+		const withoutAddedKeyAttributes = (item: AttributeMap): AttributeMap => Object.fromEntries(Object.entries(item).filter(([attribute]) => !addedKeyAttributes.includes(attribute)));
 
-		const itemify = (item: AttributeMap): Promise<ItemCarrier> => new this.Item(item as any, {"type": "fromDynamo"}).conformToSchema({"customTypesDynamo": true, "checkExpiredItem": true, "saveUnknown": true, "modifiers": ["get"], "type": "fromDynamo", "mapAttributes": true});
+		const itemify = (item: AttributeMap): Promise<ItemCarrier> => new this.Item(withoutAddedKeyAttributes(item) as any, {"type": "fromDynamo"}).conformToSchema({"customTypesDynamo": true, "checkExpiredItem": true, "saveUnknown": true, "modifiers": ["get"], "type": "fromDynamo", "mapAttributes": true});
 		const prepareResponse = async (response: DynamoDB.BatchGetItemOutput): Promise<ModelBatchGetItemsResponse<ItemCarrier>> => {
 			const responseItems = response.Responses[table.getInternalProperties(internalProperties).name];
 			// `keyObjects` use the DynamoDB attribute names, which `mapAttributes` renames on the converted items, so match keys against the raw response instead.
@@ -821,7 +826,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				params.RequestItems[table.getInternalProperties(internalProperties).name].ConsistentRead = settings.consistent;
 			}
 			if (settings.attributes) {
-				params.RequestItems[table.getInternalProperties(internalProperties).name].AttributesToGet = settings.attributes;
+				params.RequestItems[table.getInternalProperties(internalProperties).name].AttributesToGet = [...settings.attributes, ...addedKeyAttributes];
 			}
 
 			return params;
