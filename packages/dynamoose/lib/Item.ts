@@ -473,7 +473,7 @@ export class Item extends InternalPropertiesClass<ItemInternalProperties> {
 		if (settings.return === "request") {
 			if (callback) {
 				const localCallback: CallbackType<DynamoDB.PutItemInput, any> = callback as CallbackType<DynamoDB.PutItemInput, any>;
-				paramsPromise.then((result) => localCallback(null, result));
+				paramsPromise.then((result) => localCallback(null, result)).catch((error) => localCallback(error));
 				return;
 			} else {
 				return paramsPromise;
