@@ -16,6 +16,8 @@ A value is stored the way its attribute stores it. For a `Date` attribute (inclu
 new dynamoose.Condition("createdAt").gt(new Date("2026-01-01")) // createdAt is after 1 January 2026
 ```
 
+A comparison needs a value. A request that uses a condition with an `undefined` value (such as `eq(undefined)`, `{"breed": undefined}`, an `undefined` item of `in` or `between`, or a raw condition placeholder without a value) throws an `InvalidParameter` error before it is sent, because DynamoDB rejects it. The condition itself can be built without an error. A `null` value is compared with DynamoDB's `NULL` type, and an empty string, list, map or binary value is sent as it is.
+
 For a more advanced use case you pass an object into `new dynamoose.Condition()` the object for each key should contain the comparison type. For example, in the second to last example above, `contains` was our comparison type. This comparison type must match one of the comparison type functions listed on this page.
 
 You can also pass in a raw DynamoDB condition object. Which has properties for `ExpressionAttributeNames`, `ExpressionAttributeValues` & either `FilterExpression` or `ConditionExpression`. The two have the same syntax, so Dynamoose sends the expression as a `ConditionExpression` for a write (such as `Model.update` or `Model.delete`) and as a `FilterExpression` for a query or scan, whichever property you used. Any other property name throws an error. You can leave out `ExpressionAttributeValues` when the expression uses no values, such as `attribute_exists(#id)`. For a query, Dynamoose finds the key conditions in the expression: it splits the expression at each `AND` that isn't inside parentheses, picks the index the same way as for a condition built with methods, and sends each part that is a key condition on that index (`=` on a hash key; `=`, `<`, `<=`, `>`, `>=`, `BETWEEN` or `begins_with` on a range key) as the `KeyConditionExpression`. The other parts stay in the `FilterExpression`. An expression joined with `OR` isn't split, so it can't be used for a query. In the event you do this, all future condition methods called on this condition instance will be ignored. In the event you don't pass in DynamoDB objects for the `ExpressionAttributeValues` values, Dynamoose will automatically convert them to DynamoDB compatible objects to make the request.
@@ -98,6 +100,14 @@ This comparison function will check to see if the given filter key is equal to t
 new dynamoose.Condition().filter("name").eq("Tom"); // Condition all items where `name` equals `Tom`
 ```
 
+## condition.ne(value)
+
+This comparison function will check to see if the given filter key is not equal to the value you pass in as a parameter. It is the same as `condition.not().eq(value)`.
+
+```js
+new dynamoose.Condition().filter("name").ne("Tom"); // Condition all items where `name` doesn't equal `Tom`
+```
+
 ## condition.exists()
 
 This comparison function will check to see if the given filter key exists in the item.
@@ -143,6 +153,8 @@ new dynamoose.Condition().filter("age").ge(5); // Represents all items where `ag
 ## condition.beginsWith(value)
 
 This comparison function will check to see if the given filter key begins with the value you pass in as a parameter.
+
+The value must be a string or binary value, as DynamoDB requires; any other value (such as `null` or a number) throws an `InvalidParameter` error before the request is sent. DynamoDB doesn't allow `beginsWith` on a Number sort key in a query.
 
 ```js
 new dynamoose.Condition().filter("name").beginsWith("T"); // Represents all items where `name` begins with `T`

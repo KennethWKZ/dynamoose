@@ -1569,12 +1569,17 @@ describe("Model", () => {
 					expect(result.map((item) => item.name)).toEqual(["na", "nb"]);
 				});
 
-				it("Should return the item for a key that leaves out the range key", async () => {
+				it("Should throw before sending for a key that leaves out the range key", async () => {
+					// DynamoDB rejects such a key (`The provided key element does not match the schema`).
 					const Order = dynamoose.model("Order", {"id": {"type": Number, "hashKey": true}, "sk": {"type": String, "rangeKey": true}, "name": String});
 					new dynamoose.Table("Order", [Order]);
-					dynamoose.aws.ddb.set({"batchGetItem": () => Promise.resolve({"Responses": {"Order": [{"id": {"N": "1"}, "name": {"S": "Bob"}}]}, "UnprocessedKeys": {}})});
-					const result = await callType.func(Order).bind(Order)([{"id": 1}]);
-					expect(result.map((item) => ({...item}))).toEqual([{"id": 1, "name": "Bob"}]);
+					let calls = 0;
+					dynamoose.aws.ddb.set({"batchGetItem": () => {
+						calls++;
+						return Promise.resolve({"Responses": {"Order": []}, "UnprocessedKeys": {}});
+					}});
+					await expect(callType.func(Order).bind(Order)([{"id": 1}])).rejects.toEqual(new CustomError.InvalidParameter("The key attribute \"sk\" has no value (it is undefined). DynamoDB needs a value for every key attribute of the table, and doesn't allow NULL or an empty string or binary value for one."));
+					expect(calls).toEqual(0);
 				});
 
 				it("Should wait up to 100 milliseconds before the first retry by default", async () => {

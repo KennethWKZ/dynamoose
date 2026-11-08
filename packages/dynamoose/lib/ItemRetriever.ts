@@ -261,6 +261,17 @@ ItemRetriever.prototype.getRequest = async function (this: ItemRetriever): Promi
 			object.IndexName = indexSpec.indexName;
 		}
 	}
+	// DynamoDB rejects a NULL key condition value, and an empty string or binary one, so the query fails here, before it's sent.
+	// A condition value that is `undefined` already threw when the condition was converted.
+	function checkKeyConditionValues (attribute: string, expression: string): void {
+		// Every key condition compares with a value, so the expression always has a placeholder.
+		expression.match(/:\w+/gu).forEach((placeholder) => {
+			const problem = utils.dynamoose.emptyKeyValueProblem(object.ExpressionAttributeValues[placeholder]);
+			if (problem) {
+				throw new CustomError.InvalidParameter(`The key condition on "${attribute}" ${problem}. A query needs a value for every key condition, and DynamoDB doesn't allow an empty string or binary value for a key attribute.`);
+			}
+		});
+	}
 	function moveParameterNames (val, prefix): void {
 		// Only names Dynamoose made (`#a0`) move; a raw condition in a group keeps its own names in the filter.
 		const entry = Object.entries(object.ExpressionAttributeNames).find((entry) => (/^#a\d+$/).test(entry[0]) && entry[1] === val);
@@ -276,6 +287,7 @@ ItemRetriever.prototype.getRequest = async function (this: ItemRetriever): Promi
 		if (filterExpression.includes("attribute_exists") || filterExpression.includes("contains") || filterExpression.includes(" IN (") || filterExpression.includes("<>") || filterExpression.startsWith("NOT ")) {
 			return;
 		}
+		checkKeyConditionValues(value as string, filterExpression);
 		object.ExpressionAttributeNames[`#${prefix}a`] = value;
 		delete object.ExpressionAttributeNames[key];
 
@@ -348,6 +360,7 @@ ItemRetriever.prototype.getRequest = async function (this: ItemRetriever): Promi
 					return undefined;
 				}
 				const [{keyCondition}] = rawParts.splice(partIndex, 1);
+				checkKeyConditionValues(attribute, keyCondition.expression);
 				keyConditionParts.push(keyCondition.expression);
 				movedAttributes.push(attribute);
 				return keyCondition.type;
