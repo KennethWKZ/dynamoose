@@ -525,6 +525,20 @@ export class AnyItem extends Item {
 	[key: string]: any;
 }
 
+// Sets a timestamp at `path` in `object`. A `*` part stands for every element of a list, as in the timestamps of a nested Schema in a list (`addresses.*.createdAt`).
+function setTimestamp (object: any, path: string, value: string | number): void {
+	const parts = path.split(".");
+	const listIndex = parts.indexOf("*");
+	if (listIndex === -1) {
+		utils.object.set(object, path, value);
+		return;
+	}
+	const list = utils.object.get(object, parts.slice(0, listIndex).join("."));
+	if (Array.isArray(list)) {
+		list.filter((element) => element && typeof element === "object").forEach((element) => setTimestamp(element, parts.slice(listIndex + 1).join("."), value));
+	}
+}
+
 // This function will mutate the object passed in to run any actions to conform to the schema that cannot be achieved through non mutating methods in Item.objectFromSchema (setting timestamps, etc.)
 Item.prepareForObjectFromSchema = async function<T extends InternalPropertiesClass<any>>(object: T, model: Model<Item>, settings: ItemObjectFromSchemaSettings): Promise<T> {
 	if (settings.updateTimestamps) {
@@ -532,7 +546,8 @@ Item.prepareForObjectFromSchema = async function<T extends InternalPropertiesCla
 		if (schema.getInternalProperties(internalProperties).settings.timestamps && settings.type === "toDynamo") {
 			const date = new Date();
 			const timeResult = (prop) => {
-				const typeDetails = schema.getAttributeTypeDetails(prop.name);
+				// The schema names the element of a list `0`.
+				const typeDetails = schema.getAttributeTypeDetails(prop.name.split(".").map((part) => part === "*" ? "0" : part).join("."));
 				if (Array.isArray(typeDetails)) {
 					throw new CustomError.InvalidType(`Not allowed to use an array of types for the timestamps attribute "${prop.name}".`);
 				}
@@ -553,12 +568,12 @@ Item.prepareForObjectFromSchema = async function<T extends InternalPropertiesCla
 			const isSettable = (prop: {name: string}): boolean => typeof settings.updateTimestamps === "boolean" || !prop.name.includes(".");
 			if (typeof settings.updateTimestamps === "boolean" ? isNewItem : settings.updateTimestamps.createdAt) {
 				createdAtProperties.filter(isSettable).forEach((prop) => {
-					utils.object.set(object as any, prop.name, timeResult(prop));
+					setTimestamp(object, prop.name, timeResult(prop));
 				});
 			}
 			if (typeof settings.updateTimestamps === "boolean" || settings.updateTimestamps.updatedAt) {
 				updatedAtProperties.filter(isSettable).forEach((prop) => {
-					utils.object.set(object as any, prop.name, timeResult(prop));
+					setTimestamp(object, prop.name, timeResult(prop));
 				});
 			}
 		}
