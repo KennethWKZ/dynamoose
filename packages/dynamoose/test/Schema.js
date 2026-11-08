@@ -152,7 +152,7 @@ describe("Schema", () => {
 			try {
 				const User = dynamoose.model("User", new dynamoose.Schema({"id": String, "address": new dynamoose.Schema({"street": String}, {"validate": () => false})}));
 				new dynamoose.Table("User", [User]);
-				await expect(new User({"id": "1", "address": {"street": "Main"}}).save()).rejects.toThrow("had a schema validation error when trying to save the item");
+				await expect(new User({"id": "1", "address": {"street": "Main"}}).save()).rejects.toThrow("address with a value of {\"street\":\"Main\"} had a schema validation error when trying to save the item.");
 			} finally {
 				dynamoose.aws.ddb.revert();
 			}
