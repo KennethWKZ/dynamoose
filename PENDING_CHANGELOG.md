@@ -32,6 +32,7 @@
 
 ### Bug Fixes
 
+- Fixed `Model.create` and `item.save` resolving with an item that named its attributes by their names instead of their `alias`, `aliases` or `map` names, unlike `Model.get`. The item they resolve with now uses the same names `Model.get` returns. The request sent and the item `save` was called on are unchanged
 - `@kennethwkz/dynamoose` now depends on `@kennethwkz/js-object-utilities` (installed under the name `js-object-utilities`), a fork whose `entries` treats binary values as leaves and detects cycles in linear time. This fixes `Model.get`, `query` and `scan` throwing `RangeError: Maximum call stack size exceeded` for an item with a large binary attribute (dynamoose/dynamoose#1608). Paths through `__proto__` are ignored by `delete`, as in js-object-utilities 2.2.2
 - Fixed `Model.create` and `item.save` resolving with an item that left out the attributes the schema's `saveUnknown` setting allows (for example everything under `order.**`), and `item.save` removing them from the item it was called on. The stored item was correct, and `Model.get` returned them; the returned item now matches it
 - Fixed `Model.update` failing with `ValidationException: Two document paths overlap` when the update sets or removes a timestamp attribute itself (for example `{"updatedAt": date}` or `{"$REMOVE": ["updatedAt"]}`). Dynamoose no longer adds its own value for a timestamp attribute that the update already names
