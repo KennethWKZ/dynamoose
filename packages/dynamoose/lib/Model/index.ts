@@ -51,6 +51,40 @@ const checkTableKeyValue = (attribute: string, value: DynamoDB.AttributeValue | 
 		throw new CustomError.InvalidParameter(`The key attribute "${attribute}" ${problem}. DynamoDB needs a value for every key attribute of the table, and doesn't allow NULL or an empty string or binary value for one.`);
 	}
 };
+const updateOperators = ["$SET", "$ADD", "$REMOVE", "$DELETE"];
+const isUpdateOperator = (key: string, value: any): boolean => updateOperators.includes(key) && typeof value === "object" && value !== null;
+// The attribute names an update writes. A name under `$SET`, `$ADD` or `$DELETE` is a key of its object, and under `$REMOVE` an item of its list.
+const updateAttributeNames = (updateObj: ObjectType): string[] => Object.entries(updateObj).flatMap(([key, value]) => {
+	if (!isUpdateOperator(key, value)) {
+		return [key];
+	}
+	return Array.isArray(value) ? value : Object.keys(value);
+});
+// The update with each attribute named by an alias (`alias`, `aliases` or `map`) renamed to the attribute, as the update looks up attributes by name.
+const attributeNamesForAliases = (schema: Schema, updateObj: ObjectType): ObjectType => {
+	const aliases = schema.getInternalProperties(internalProperties).getMapSettingObject();
+	const attributeName = (name: string): string => Object.prototype.hasOwnProperty.call(aliases, name) ? aliases[name] : name;
+	return Object.entries(updateObj).reduce((result: ObjectType, [key, value]) => {
+		if (!isUpdateOperator(key, value)) {
+			result[attributeName(key)] = value;
+		} else {
+			result[key] = Array.isArray(value) ? value.map(attributeName) : Object.fromEntries(Object.entries(value).map(([name, nameValue]) => [attributeName(name), nameValue]));
+		}
+		return result;
+	}, {});
+};
+// The schema whose rules an update follows on a model with several schemas: the one that defines the most of the attribute names the update writes, by name or alias, so an attribute only a later schema defines gets that schema's rules. A tie keeps the first schema.
+const schemaForUpdate = (schemas: Schema[], updateObj: ObjectType): Schema => {
+	if (schemas.length === 1) {
+		return schemas[0];
+	}
+	const names = updateAttributeNames(updateObj);
+	const definedCount = (schema: Schema): number => {
+		const aliases = schema.getInternalProperties(internalProperties).getMapSettingObject();
+		return names.filter((name) => schema.attributes().includes(name) || Object.prototype.hasOwnProperty.call(aliases, name)).length;
+	};
+	return schemas.reduce((best, schema) => definedCount(schema) > definedCount(best) ? schema : best);
+};
 // The same string for two DynamoDB keys only when they name the same item. A number is compared by its value and a binary value by its bytes, as DynamoDB does.
 const keyString = (item: AttributeMap, keyAttributes: string[]): string => JSON.stringify(keyAttributes.map((attribute) => {
 	const value: any = item[attribute];
@@ -977,7 +1011,6 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 			settings = {"return": "item"};
 		}
 
-		const schema: Schema = this.getInternalProperties(internalProperties).schemas[0]; // TODO: fix this to get correct schema
 		const table = this.getInternalProperties(internalProperties).table();
 		const {instance} = table.getInternalProperties(internalProperties);
 		let index = 0;
@@ -1028,8 +1061,14 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				{"name": "$DELETE", "objectFromSchemaSettings": {"defaults": true}}
 			].reverse();
 
-			if (!updateObj) {
+			const isKeyAndUpdate = !updateObj;
+			if (isKeyAndUpdate) {
 				updateObj = utils.deep_copy(keyObj) as DeepPartial<T>;
+			}
+			const schema = schemaForUpdate(this.getInternalProperties(internalProperties).schemas, updateObj);
+			updateObj = attributeNamesForAliases(schema, updateObj) as DeepPartial<T>;
+			// The key and the update in one object: the key attributes, which can be named by an alias, are the key, not part of the update.
+			if (isKeyAndUpdate) {
 				Object.keys(await getKeyObject()).forEach((key) => delete updateObj[key]);
 			}
 
@@ -1350,17 +1389,22 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				delete returnObject.ExpressionAttributeValues;
 			}
 
+			const updateExpression = Object.keys(returnObject.UpdateExpression).reduce((accumulator, key) => {
+				const value = returnObject.UpdateExpression[key];
+
+				if (value.length > 0) {
+					return `${accumulator}${accumulator.length > 0 ? " " : ""}${key} ${value.join(", ")}`;
+				} else {
+					return accumulator;
+				}
+			}, "");
+			// DynamoDB rejects an empty update expression, so an update with nothing to change fails here, before it's sent.
+			if (updateExpression === "") {
+				throw new CustomError.InvalidParameter("The update has nothing to change. Every attribute it names is undefined and not in the schema, or it names none, and DynamoDB rejects an empty update.");
+			}
 			return {
 				...returnObject,
-				"UpdateExpression": Object.keys(returnObject.UpdateExpression).reduce((accumulator, key) => {
-					const value = returnObject.UpdateExpression[key];
-
-					if (value.length > 0) {
-						return `${accumulator}${accumulator.length > 0 ? " " : ""}${key} ${value.join(", ")}`;
-					} else {
-						return accumulator;
-					}
-				}, "")
+				"UpdateExpression": updateExpression
 			};
 		};
 
