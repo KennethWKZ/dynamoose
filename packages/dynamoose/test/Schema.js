@@ -136,10 +136,51 @@ describe("Schema", () => {
 			expect(settings).toEqual(makeSettings());
 		});
 
+		it("Should not add another nested Schema's indexes to a nested Schema", async () => {
+			const first = new dynamoose.Schema({"id": String, "a": String, "b": String}, {"indexes": {"global": [{"name": "firstIndex", "hashKey": ["a", "b"]}]}});
+			const second = new dynamoose.Schema({"c": String, "d": String}, {"indexes": {"global": [{"name": "secondIndex", "hashKey": ["c", "d"]}]}});
+			new dynamoose.Schema({"id": String, "first": first, "second": second});
+
+			const First = dynamoose.model("First", first);
+			const table = new dynamoose.Table("First", [First]);
+			const request = await table.create({"return": "request"});
+			expect(request.GlobalSecondaryIndexes.map((index) => index.IndexName)).toEqual(["firstIndex"]);
+		});
+
+		it("Should still use a nested Schema's validate setting when saving", async () => {
+			dynamoose.aws.ddb.set({"putItem": () => Promise.resolve({})});
+			try {
+				const User = dynamoose.model("User", new dynamoose.Schema({"id": String, "address": new dynamoose.Schema({"street": String}, {"validate": () => false})}));
+				new dynamoose.Table("User", [User]);
+				await expect(new User({"id": "1", "address": {"street": "Main"}}).save()).rejects.toThrow("had a schema validation error when trying to save the item");
+			} finally {
+				dynamoose.aws.ddb.revert();
+			}
+		});
+
+		it("Should not add a nested Schema's indexes to the schema", async () => {
+			const nested = new dynamoose.Schema({"a": String, "b": String}, {"indexes": {"global": [{"name": "nestedIndex", "hashKey": ["a", "b"]}]}});
+			const User = dynamoose.model("User", new dynamoose.Schema({"id": String, "nested": nested}));
+			const table = new dynamoose.Table("User", [User]);
+			const request = await table.create({"return": "request"});
+			expect(request.GlobalSecondaryIndexes).toBeUndefined();
+		});
+
 		it("Should not modify the schema definition object with timestamps", () => {
 			const definition = {"id": String, "name": String};
 			new dynamoose.Schema(definition, {"timestamps": true});
 			expect(definition).toEqual({"id": String, "name": String});
+		});
+
+		it.each([
+			["without a prototype", () => Object.create(null)],
+			["from another realm", () => require("vm").runInNewContext("({})")]
+		])("Should not modify a schema definition object and a settings object %s", (name, makeObject) => {
+			const definition = Object.assign(makeObject(), {"id": String, "name": String});
+			const settings = Object.assign(makeObject(), {"timestamps": true});
+			new dynamoose.Schema(definition, settings);
+			expect(Object.keys(definition)).toEqual(["id", "name"]);
+			expect(settings.timestamps).toEqual(true);
 		});
 
 		it("Should not replace a nested Schema in an object in the schema definition", () => {
