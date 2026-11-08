@@ -44,6 +44,13 @@ const validRetryUnprocessed = (retry?: BatchRetryUnprocessedSettings): BatchRetr
 };
 // The longest wait before one retry, so many attempts don't wait for hours.
 const MAX_RETRY_WAIT = 20000;
+// DynamoDB rejects a request whose key, or a put whose item, has no value for a key attribute of the table, or has NULL or an empty string or binary value for one.
+const checkTableKeyValue = (attribute: string, value: DynamoDB.AttributeValue | undefined): void => {
+	const problem = utils.dynamoose.emptyKeyValueProblem(value);
+	if (problem) {
+		throw new CustomError.InvalidParameter(`The key attribute "${attribute}" ${problem}. DynamoDB needs a value for every key attribute of the table, and doesn't allow NULL or an empty string or binary value for one.`);
+	}
+};
 // The same string for two DynamoDB keys only when they name the same item. A number is compared by its value and a binary value by its bytes, as DynamoDB does.
 const keyString = (item: AttributeMap, keyAttributes: string[]): string => JSON.stringify(keyAttributes.map((attribute) => {
 	const value: any = item[attribute];
@@ -299,6 +306,7 @@ interface ModelInternalProperties {
 	options: TableOptionsOptional;
 	getIndexes: () => Promise<{GlobalSecondaryIndexes?: IndexItem[]; LocalSecondaryIndexes?: IndexItem[]; TableIndex?: any}>;
 	convertKeyToObject: (key: InputKey) => Promise<KeyObject>;
+	checkKeyAttributeValues: (values: {[attribute: string]: DynamoDB.AttributeValue}, settings: {requireTableKey: boolean}) => Promise<void>;
 	schemaCorrectnessScores: (object: ObjectType) => number[];
 	schemaForObject: (object: ObjectType) => Schema;
 	dynamoPropertyForAttribute: (attribute: string) => Promise<string>;
@@ -408,15 +416,16 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				const hashKey = this.getInternalProperties(internalProperties).getHashKey();
 				// `customTypesDynamo` converts custom key types (such as `Date`) to the value DynamoDB stores, as saving an item does.
 				const objectFromSchemaSettings: ItemObjectFromSchemaSettings = {"type": "toDynamo", "modifiers": ["set"], "typeCheck": false, "mapAttributes": true, "customTypesDynamo": true};
-				// A `Date` or binary value is the hash key value itself, not an object of key attributes.
-				if (typeof key === "object" && !(key instanceof Date) && !(key instanceof Uint8Array)) {
+				// A `Date` or binary value is the hash key value itself, not an object of key attributes. So is `null`, which the check below rejects.
+				if (key !== null && typeof key === "object" && !(key instanceof Date) && !(key instanceof Uint8Array)) {
 					// If we passed aliased attribute names, we need to get them back to the key names
 					const mappedKey = await this.Item.objectFromSchema(key, this, objectFromSchemaSettings);
 					const rangeKey = this.getInternalProperties(internalProperties).getRangeKey();
 					keyObject = {
 						[hashKey]: mappedKey[hashKey]
 					};
-					if (rangeKey && typeof mappedKey[rangeKey] !== "undefined" && mappedKey[rangeKey] !== null) {
+					// A `null` range key is kept, so the check below reports it as `null`.
+					if (rangeKey && typeof mappedKey[rangeKey] !== "undefined") {
 						keyObject[rangeKey] = mappedKey[rangeKey];
 					}
 				} else {
@@ -428,7 +437,27 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 						[hashKey]: convertedKey[hashKey]
 					};
 				}
+				// DynamoDB rejects a key without a value for each key attribute, or with an empty string or binary value, so the request fails here, before it's sent.
+				[hashKey, this.getInternalProperties(internalProperties).getRangeKey()].filter(Boolean).forEach((attribute) => {
+					const value = keyObject[attribute];
+					checkTableKeyValue(attribute, value === undefined ? undefined : this.Item.objectToDynamo(value, {"type": "value"}));
+				});
 				return keyObject;
+			},
+			// DynamoDB rejects a write that sets a key attribute, of the table or of an index (each attribute of a multi-attribute key too), to NULL or an empty string or binary value, and a put without the table's key attributes. So the write fails here, before it's sent. An index key attribute can be left out, which leaves the item out of the index.
+			"checkKeyAttributeValues": async (values: {[attribute: string]: DynamoDB.AttributeValue}, settings: {requireTableKey: boolean}): Promise<void> => {
+				const {TableIndex, GlobalSecondaryIndexes = [], LocalSecondaryIndexes = []} = await this.getInternalProperties(internalProperties).getIndexes();
+				TableIndex.KeySchema.forEach(({AttributeName}) => {
+					if (settings.requireTableKey || values[AttributeName] !== undefined) {
+						checkTableKeyValue(AttributeName, values[AttributeName]);
+					}
+				});
+				[...GlobalSecondaryIndexes, ...LocalSecondaryIndexes].forEach(({IndexName, KeySchema}) => KeySchema.forEach(({AttributeName}) => {
+					const problem = values[AttributeName] === undefined ? undefined : utils.dynamoose.emptyKeyValueProblem(values[AttributeName]);
+					if (problem) {
+						throw new CustomError.InvalidParameter(`"${AttributeName}", a key attribute of the index "${IndexName}", ${problem}. DynamoDB doesn't allow NULL or an empty string or binary value for a key attribute of an index. Leave the attribute out to leave the item out of the index.`);
+					}
+				}));
 			},
 			"schemaCorrectnessScores": (object: ObjectType): number[] => {
 				const schemaCorrectnessScores: number[] = this.getInternalProperties(internalProperties).schemas.map((schema) => {
@@ -651,7 +680,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 		if (attributes === undefined || attributes === null) {
 			return undefined;
 		}
-		const isDynamoItem = typeof attributes === "object" && Object.values(attributes).every((value) => this.Item.isDynamoObject({"key": value}));
+		const isDynamoItem = typeof attributes === "object" && Object.values(attributes).every((value) => this.Item.isDynamoValue(value));
 		if (!isDynamoItem) {
 			throw new CustomError.InvalidParameter("itemFromDynamo takes an item in DynamoDB's format, such as {\"id\": {\"N\": \"1\"}}.");
 		}
@@ -816,7 +845,10 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 			"RequestItems": {
 				[table.getInternalProperties(internalProperties).name]: await Promise.all(items.map(async (item) => ({
 					"PutRequest": {
-						"Item": await new this.Item(item as any).toDynamo({"defaults": true, "validate": true, "required": true, "enum": true, "forceDefault": true, "saveUnknown": true, "combine": true, "customTypesDynamo": true, "updateTimestamps": true, "modifiers": ["set"], "mapAttributes": true})
+						"Item": await new this.Item(item as any).toDynamo({"defaults": true, "validate": true, "required": true, "enum": true, "forceDefault": true, "saveUnknown": true, "combine": true, "customTypesDynamo": true, "updateTimestamps": true, "modifiers": ["set"], "mapAttributes": true}).then(async (dynamoItem) => {
+							await this.getInternalProperties(internalProperties).checkKeyAttributeValues(dynamoItem, {"requireTableKey": true});
+							return dynamoItem;
+						})
 					}
 				})))
 			}
@@ -1305,6 +1337,15 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 			}
 
 			returnObject.ExpressionAttributeValues = this.Item.objectToDynamo(returnObject.ExpressionAttributeValues);
+			// The top-level attributes the update sets (`#a0 = :v0`), to check the key attributes among them.
+			const setValues = returnObject.UpdateExpression.SET.reduce((values: {[attribute: string]: DynamoDB.AttributeValue}, expression: string) => {
+				const match = (/^(#a\d+) = (:v\d+)$/u).exec(expression);
+				if (match) {
+					values[returnObject.ExpressionAttributeNames[match[1]]] = returnObject.ExpressionAttributeValues[match[2]];
+				}
+				return values;
+			}, {});
+			await this.getInternalProperties(internalProperties).checkKeyAttributeValues(setValues, {"requireTableKey": false});
 			if (Object.keys(returnObject.ExpressionAttributeValues).length === 0) {
 				delete returnObject.ExpressionAttributeValues;
 			}

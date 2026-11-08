@@ -23,8 +23,9 @@ const isRawConditionObject = (object): boolean => {
 const rawConditionExpressionKeys = ["ConditionExpression", "FilterExpression"];
 
 export type ConditionFunction = (condition: Condition) => Condition;
-// TODO: There is a problem where you can have multiple keys in one `ConditionStorageType`, which will cause problems. We need to fix that. Likely be refactoring it so that the key is part of `ConditionsConditionStorageObject`.
+// One stored comparison: an object with the attribute as its only key. Every comparison is stored by `conditionEntry`, so each has exactly one key, which the code that reads them (`Object.entries(entry)[0]`) relies on.
 type ConditionStorageType = {[key: string]: ConditionsConditionStorageObject} | typeof OR;
+const conditionEntry = (attribute: string, type: ConditionComparisonComparatorDynamoName, value: any): ConditionStorageType => ({[attribute]: {type, value}});
 export type ConditionStorageTypeNested = ConditionStorageType | Array<ConditionStorageTypeNested>;
 type ConditionStorageSettingsConditions = ConditionStorageTypeNested[];
 // TODO: the return value of the function below is incorrect. We need to add a property to the object that is a required string, where the property/key name is always equal to `settings.conditionString`
@@ -92,6 +93,7 @@ export interface BasicOperators<T = Condition> {
 	filter: (key: string) => T;
 	attribute: (key: string) => T;
 	eq: (value: any) => T;
+	ne: (value: any) => T;
 	lt: (value: any) => T;
 	le: (value: any) => T;
 	gt: (value: any) => T;
@@ -108,6 +110,7 @@ export interface Condition extends BasicOperators { // eslint-disable-line @type
 	filter: (key: string) => Condition;
 	attribute: (key: string) => Condition;
 	eq: (value: any) => Condition;
+	ne: (value: any) => Condition;
 	lt: (value: any) => Condition;
 	le: (value: any) => Condition;
 	gt: (value: any) => Condition;
@@ -143,8 +146,8 @@ interface ConditionInternalProperties {
 
 export class Condition extends InternalPropertiesClass<ConditionInternalProperties> { // eslint-disable-line @typescript-eslint/no-unsafe-declaration-merging
 	/**
-	 * TODO
-	 * @param object
+	 * This function creates a condition. A string starts a comparison on that attribute (`new dynamoose.Condition("name").eq("Bob")`), and without an argument you start one with `where(key)`. An object compares each of its attributes: a value compares with `eq` (`{"name": "Bob"}`), and an object names its comparison (`{"age": {"gt": 5}}`). A condition is copied. A raw DynamoDB condition object (a `ConditionExpression` or `FilterExpression` with `ExpressionAttributeNames` and, when it uses values, `ExpressionAttributeValues`) is used as it is, and condition methods called on it are ignored.
+	 * @param object The attribute to start a comparison on, an object of comparisons, a condition to copy, or a raw DynamoDB condition object.
 	 * @returns Condition
 	 */
 	constructor (object?: ConditionInitializer) {
@@ -154,15 +157,8 @@ export class Condition extends InternalPropertiesClass<ConditionInternalProperti
 			"requestObject": async (model: Model<Item>, settings: ConditionRequestObjectSettings = {"conditionString": "ConditionExpression", "conditionStringType": "string"}): Promise<ConditionRequestObjectResult> => {
 				const toDynamo = async (key: string, value: ObjectType): Promise<DynamoDB.AttributeValue> => {
 					const newObj = await Item.objectFromSchema({[key]: value}, model, {"type": "toDynamo", "modifiers": ["set"], "typeCheck": false, "mapAttributes": true, "customTypesDynamo": true});
-					const newObjKeys = Object.keys(newObj);
-					// TODO: not quite sure how to unit test the error below. Need to figure this out. Maybe by mocking `Item.objectFromSchema`??? We don't currently have a system in place to do that easily tho.
-					/* istanbul ignore next */
-					if (newObjKeys.length > 1) {
-						/* istanbul ignore next */
-						throw new CustomError.OtherError("Error retrieving `requestObject` from Condition. Please submit an issue on the Dynamoose GitHub repository.");
-					}
-
-					let newValue = newObj[newObjKeys[0]];
+					// `objectFromSchema` returns at most the one attribute it is given, as these settings add none (no defaults, timestamps or combine attributes).
+					let newValue = newObj[Object.keys(newObj)[0]];
 					// A nested path (`meta.when`) is a property name above, so its attribute is only found from the nested object.
 					if (newValue instanceof Date && key.includes(".")) {
 						const nestedObj = await Item.objectFromSchema(utils.object.set({}, key, value), model, {"type": "toDynamo", "modifiers": ["set"], "typeCheck": false, "mapAttributes": true, "customTypesDynamo": true});
@@ -171,6 +167,10 @@ export class Condition extends InternalPropertiesClass<ConditionInternalProperti
 					// A Date is converted by the attribute's Date type (milliseconds, seconds or ISO string). Any other attribute has no stored form for it.
 					if (newValue instanceof Date) {
 						throw new CustomError.InvalidParameter(`The condition value for "${key}" is a Date, but "${key}" isn't a Date attribute in the schema, so Dynamoose doesn't know how it is stored. Pass date.getTime() or date.toISOString() instead.`);
+					}
+					// DynamoDB rejects an expression that uses a value placeholder without a value.
+					if (newValue === undefined) {
+						throw new CustomError.InvalidParameter(`The condition on "${key}" has no value (it is undefined).`);
 					}
 					return Item.objectToDynamo(newValue, {"type": "value"});
 				};
@@ -183,10 +183,14 @@ export class Condition extends InternalPropertiesClass<ConditionInternalProperti
 					}
 					// Builds a new object, because callers merge their own names and values into the result.
 					const {ExpressionAttributeNames, ExpressionAttributeValues} = raw;
+					// Every `:value` placeholder in the expression needs a value, which DynamoDB would otherwise reject.
+					const missingValue = (raw[expressionKey].match(/:\w+/gu) || []).find((placeholder) => (ExpressionAttributeValues || {})[placeholder] === undefined);
+					if (missingValue) {
+						throw new CustomError.InvalidParameter(`The raw condition has no value for "${missingValue}" (it is undefined).`);
+					}
 					return utils.async_reduce(Object.entries(ExpressionAttributeValues || {}), async (obj, entry) => {
 						const [key, value] = entry;
-						// TODO: we should fix this so that we can do `isDynamoItem(value)`
-						if (!Item.isDynamoObject({"key": value})) {
+						if (!Item.isDynamoValue(value)) {
 							obj.ExpressionAttributeValues[key] = await toDynamo(key, value);
 						}
 						return obj;
@@ -306,9 +310,15 @@ export class Condition extends InternalPropertiesClass<ConditionInternalProperti
 								expression = `attribute_${condition.type === "NOT_EXISTS" ? "not_" : ""}exists (${keys.name})`;
 								break;
 							case "BEGINS_WITH":
-							case "NOT_BEGINS_WITH":
+							case "NOT_BEGINS_WITH": {
+								// DynamoDB rejects `begins_with` with any other operand (`Incorrect operand type for operator or function`).
+								const [valueType] = Object.keys(object.ExpressionAttributeValues[keys.value]);
+								if (valueType !== "S" && valueType !== "B") {
+									throw new CustomError.InvalidParameter(`The beginsWith condition on "${key}" needs a string or binary value, but the value has the DynamoDB type ${valueType}.`);
+								}
 								expression = `${condition.type === "NOT_BEGINS_WITH" ? "NOT " : ""}begins_with (${keys.name}, ${keys.value})`;
 								break;
+							}
 							}
 						} else {
 							return object;
@@ -331,7 +341,14 @@ export class Condition extends InternalPropertiesClass<ConditionInternalProperti
 					}, {[settings.conditionString]: settings.conditionStringType === "array" ? [] : "", "ExpressionAttributeNames": {}, "ExpressionAttributeValues": {}});
 				}
 
-				return utils.object.clearEmpties(await main(this.getInternalProperties(internalProperties).settings.conditions));
+				// DynamoDB rejects an empty `ExpressionAttributeNames` or `ExpressionAttributeValues`, so an empty one is left out. A value in them is kept as it is, even an empty list, map or binary value, which is a value DynamoDB compares with.
+				const requestObject = await main(this.getInternalProperties(internalProperties).settings.conditions);
+				return Object.entries(requestObject).reduce((result, [key, value]) => {
+					if (typeof value !== "object" || Object.keys(value).length > 0) {
+						result[key] = value;
+					}
+					return result;
+				}, {});
 			},
 			"comparisonChart": (model: Model<Item>): Promise<any> => {
 				const comparisonChart = this.getInternalProperties(internalProperties).settings.conditions.reduce((res, item) => {
@@ -367,19 +384,16 @@ export class Condition extends InternalPropertiesClass<ConditionInternalProperti
 				if (!isRawConditionObject(object)) {
 					Object.keys(object).forEach((key) => {
 						const value = object[key];
-						const valueType = typeof value === "object" && Object.keys(value).length > 0 ? Object.keys(value)[0] : "eq";
+						// `{"id": {"le": 5}}` names its comparison; any other value (`{"id": 5}`, a Date, `undefined`, `null`) is compared with `eq`.
+						const isComparisonObject = value !== null && typeof value === "object" && Object.keys(value).length > 0;
+						const valueType = isComparisonObject ? Object.keys(value)[0] : "eq";
 						const comparisonType = types.find((item) => item.name === valueType);
 
 						if (!comparisonType) {
 							throw new CustomError.InvalidFilterComparison(`The type: ${valueType} is invalid.`);
 						}
 
-						this.getInternalProperties(internalProperties).settings.conditions.push({
-							[key]: {
-								"type": comparisonType.typeName,
-								"value": typeof value[valueType] !== "undefined" && value[valueType] !== null ? value[valueType] : value
-							}
-						});
+						this.getInternalProperties(internalProperties).settings.conditions.push(conditionEntry(key, comparisonType.typeName, isComparisonObject ? value[valueType] : value));
 					});
 				}
 			} else if (object) {
@@ -512,12 +526,7 @@ function finalizePending (instance: Condition): void {
 		dynamoNameType = pending.type.typeName;
 	}
 
-	instance.getInternalProperties(internalProperties).settings.conditions.push({
-		[pending.key]: {
-			"type": dynamoNameType,
-			"value": pending.value
-		}
-	});
+	instance.getInternalProperties(internalProperties).settings.conditions.push(conditionEntry(pending.key, dynamoNameType, pending.value));
 
 	instance.getInternalProperties(internalProperties).settings.pending = {};
 }
@@ -526,13 +535,11 @@ Condition.prototype.where = Condition.prototype.filter = Condition.prototype.att
 	this.getInternalProperties(internalProperties).settings.pending = {key};
 	return this;
 };
-// TODO: I don't think this prototypes are being exposed which is gonna cause a lot of problems with our type definition file. Need to figure out a better way to do this since they aren't defined and are dynamic.
+// Each comparison in `types` is added to the prototype here, so TypeScript only knows it from its declaration in `BasicOperators` (which `Condition`, `Query` and `Scan` extend). This type is `never` when a comparison isn't declared there, so the assignment below fails to compile instead of leaving the method untyped.
+type DeclaredComparisonName = Exclude<`${ConditionComparisonComparatorName}`, keyof BasicOperators> extends never ? ConditionComparisonComparatorName : never;
 types.forEach((type) => {
-	Condition.prototype[type.name] = function (this: Condition, ...args: any[]): Condition {
-		if (args.includes(undefined)) {
-			console.warn(`Dynamoose Warning: Passing \`undefined\` into a condition ${type.name} is not supported and can lead to behavior where DynamoDB returns an error related to your conditional. In a future version of Dynamoose this behavior will throw an error. If you believe your conditional is valid and you received this message in error, please submit an issue at https://github.com/dynamoose/dynamoose/issues/new/choose.`); // eslint-disable-line no-console
-		}
-
+	const name: DeclaredComparisonName = type.name;
+	Condition.prototype[name] = function (this: Condition, ...args: any[]): Condition {
 		this.getInternalProperties(internalProperties).settings.pending.value = type.multipleArguments ? args : args[0];
 		this.getInternalProperties(internalProperties).settings.pending.type = type;
 		finalizePending(this);
