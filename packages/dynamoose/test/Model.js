@@ -4146,6 +4146,22 @@ describe("Model", () => {
 					});
 				});
 
+				it("Should keep a raw condition's value apart from the empty list for list append", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "active": Boolean, "friends": {"type": Array, "schema": [String]}});
+					new dynamoose.Table("User", [User]);
+					// The raw condition uses `:v1`, which the update would otherwise number on its own.
+					const condition = new dynamoose.Condition({"ConditionExpression": "#active = :v1", "ExpressionAttributeNames": {"#active": "active"}, "ExpressionAttributeValues": {":v1": true}});
+					await callType.func(User).bind(User)({"id": 1}, {"$ADD": {"friends": "Tim"}}, {condition});
+					expect(updateItemParams.ConditionExpression).toEqual("#active = :v1");
+					expect(updateItemParams.ExpressionAttributeValues[":v1"]).toEqual({"BOOL": true});
+					const [, name, emptyList, appended] = (/^SET (#\w+) = list_append\(if_not_exists\(\1, (:\w+)\), (:\w+)\)$/u).exec(updateItemParams.UpdateExpression);
+					expect(updateItemParams.ExpressionAttributeNames[name]).toEqual("friends");
+					expect(emptyList).not.toEqual(":v1");
+					expect(updateItemParams.ExpressionAttributeValues[emptyList]).toEqual({"L": []});
+					expect(updateItemParams.ExpressionAttributeValues[appended]).toEqual({"L": [{"S": "Tim"}]});
+				});
+
 				it("Should send correct params to updateItem with $ADD for list append with combine properties", async () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", {"id": Number, "data1": String, "data2": String, "combine": {"type": {"value": "Combine", "settings": {"attributes": ["data1", "data2"]}}}, "friends": {"type": Array, "schema": [String]}});
