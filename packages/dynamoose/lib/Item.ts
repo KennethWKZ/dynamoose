@@ -120,6 +120,11 @@ export class Item extends InternalPropertiesClass<ItemInternalProperties> {
 	static objectFromSchema: (object: any, model: Model<Item>, settings?: ItemObjectFromSchemaSettings) => Promise<any>;
 	static prepareForObjectFromSchema: (object: any, model: Model<Item>, settings: ItemObjectFromSchemaSettings) => any;
 	conformToSchema: (this: Item, settings?: ItemObjectFromSchemaSettings) => Promise<Item>;
+	/**
+	 * Converts the item into DynamoDB's format. Attributes the schema doesn't name are kept as the schema's `saveUnknown` setting allows, as `item.save` stores them, unless `settings.saveUnknown` is `false`.
+	 * @param settings Optional settings for the conversion.
+	 * @returns Promise<AttributeMap>
+	 */
 	toDynamo: (this: Item, settings?: Partial<ItemObjectFromSchemaSettings>) => Promise<any>;
 
 	// This function handles actions that should take place before every response (get, scan, query, batchGet, etc.)
@@ -960,6 +965,8 @@ Item.objectFromSchema = async function (object: any, model: Model<Item>, setting
 };
 Item.prototype.toDynamo = async function (this: Item, settings: Partial<ItemObjectFromSchemaSettings> = {}): Promise<any> {
 	const newSettings: ItemObjectFromSchemaSettings = {
+		// The schema's `saveUnknown` setting applies unless the caller turns it off, so `item.toDynamo()` keeps the attributes `item.save` stores.
+		"saveUnknown": true,
 		...settings,
 		"type": "toDynamo"
 	};

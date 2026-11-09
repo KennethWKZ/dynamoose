@@ -108,6 +108,7 @@
 - Fixed `Model.update` and `Model.transaction.update` writing a nested `forceDefault` attribute to a new top-level attribute named after its path (for example `"config.timeout": 5`). Without `merge`, every update wrote it; with `{"merge": true}`, every update that didn't write its parent, unless the update merged a nested property named like the parent. A nested forced default is now applied only when the update writes its parent
 - Fixed `Model.batchGet` with an `attributes` setting that leaves out the table's hash or range key returning no items. DynamoDB returned the items, but without their key attributes they couldn't be matched to the keys, so they were dropped. The key attributes are now requested too, and left out of the returned items unless `attributes` lists them, as `Model.get` does
 - Fixed `Model.itemFromDynamo` throwing `TypeError: Cannot convert undefined or null to object` for an item with a null value where an attribute value belongs, such as `{"a": {"M": null}}` or `{"a": {"L": [null]}}`. It now throws the `InvalidParameter` error it throws for any other item that isn't in DynamoDB's format
+- Fixed `item.toDynamo()` leaving out every attribute the schema doesn't name, even when the schema's `saveUnknown` setting allows it, so its result differed from what `item.save` stores (#1679). It now applies the schema's `saveUnknown` setting, unless `saveUnknown: false` is passed in its settings
 
 ### Other
 
