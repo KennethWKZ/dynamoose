@@ -223,10 +223,8 @@ export interface StreamAttributeValue {
 	SS?: string[];
 }
 // A Lambda event is JSON, so a stream image in it holds binary values as base64 strings. The AWS SDK holds them as bytes, which is what conversion expects.
+// `value` is always one attribute value object: `itemFromDynamo` checks with `Item.isDynamoValue`, which checks every list item and map value too, before converting.
 const binaryFromBase64 = (value: any): any => {
-	if (!value || typeof value !== "object") {
-		return value;
-	}
 	if (typeof value.B === "string") {
 		return {"B": Buffer.from(value.B, "base64")};
 	}

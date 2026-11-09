@@ -59,6 +59,21 @@ describe("model.itemFromDynamo", () => {
 		expect(item.list).toEqual([Buffer.from("hi")]);
 	});
 
+	it("Should convert binary values inside a map a Lambda event has as base64 strings", async () => {
+		const File = dynamoose.model("File", {"id": String, "meta": {"type": Object, "schema": {"blob": Buffer, "name": String, "inner": {"type": Object, "schema": {"blob": Buffer}}}}});
+		new dynamoose.Table("File", [File]);
+		const item = await File.itemFromDynamo({"id": {"S": "f1"}, "meta": {"M": {"blob": {"B": "aGk="}, "name": {"S": "a"}, "inner": {"M": {"blob": {"B": "Yg=="}}}}}});
+		expect(item.meta).toEqual({"blob": Buffer.from("hi"), "name": "a", "inner": {"blob": Buffer.from("b")}});
+	});
+
+	it("Should keep binary values that are already bytes, as in an AWS SDK item", async () => {
+		const File = dynamoose.model("File", {"id": String, "data": Buffer, "parts": {"type": Set, "schema": [Buffer]}});
+		new dynamoose.Table("File", [File]);
+		const item = await File.itemFromDynamo({"id": {"S": "f1"}, "data": {"B": new Uint8Array([104, 105])}, "parts": {"BS": [new Uint8Array([97]), new Uint8Array([98])]}});
+		expect(Buffer.from(item.data)).toEqual(Buffer.from("hi"));
+		expect([...item.parts].map((part) => Buffer.from(part))).toEqual([Buffer.from("a"), Buffer.from("b")]);
+	});
+
 	it("Should return undefined for an empty image", async () => {
 		expect(await User.itemFromDynamo(undefined)).toEqual(undefined);
 	});
