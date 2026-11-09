@@ -1963,6 +1963,16 @@ describe("Model", () => {
 					]);
 				});
 
+				it("Should return items with mapped properties from a non-first schema", async () => {
+					User = dynamoose.model("User", [new dynamoose.Schema({"pk": Number, "value": {"type": Number, "map": "numeric"}}), new dynamoose.Schema({"pk": Number, "value": {"type": String, "map": "text"}})]);
+					new dynamoose.Table("User", [User]);
+					promiseFunction = () => Promise.resolve({"Responses": {"User": [{"pk": {"N": "1"}, "value": {"S": "Bob"}}]}, "UnprocessedKeys": {}});
+					const result = await callType.func(User).bind(User)([1]);
+					expect(result.map((item) => ({...item}))).toEqual([
+						{"pk": 1, "text": "Bob"}
+					]);
+				});
+
 				it("Should not return expired items", async () => {
 					User = dynamoose.model("User", {"id": Number});
 					new dynamoose.Table("User", [User], {"expires": {"ttl": 1000, "items": {"returnExpired": false}}});
@@ -4842,6 +4852,18 @@ describe("Model", () => {
 					});
 				});
 
+				it("Should return updated item with mapped properties from a non-first schema upon success", async () => {
+					User = dynamoose.model("User", [new dynamoose.Schema({"pk": Number, "value": {"type": Number, "map": "numeric"}}), new dynamoose.Schema({"pk": Number, "value": {"type": String, "map": "text"}})]);
+					new dynamoose.Table("User", [User]);
+					updateItemFunction = () => Promise.resolve({"Attributes": {"pk": {"N": "1"}, "value": {"S": "Bob"}}});
+					const result = await callType.func(User).bind(User)({"pk": 1}, {"value": "Bob"});
+					expect(result.constructor.name).toEqual("User");
+					expect({...result}).toEqual({
+						"pk": 1,
+						"text": "Bob"
+					});
+				});
+
 				it("Should return updated item with get function applied upon success", async () => {
 					User = dynamoose.model("User", {"id": Number, "name": {"type": String, "get": (val) => `${val}-get`}});
 					new dynamoose.Table("User", [User]);
@@ -5066,6 +5088,37 @@ describe("Model", () => {
 						expect(validateCalls).toEqual([{"id": 1, "data": {"name": "Charlie"}}]);
 						expect(updateItemParams.UpdateExpression).toEqual("SET #a0.#a1 = :v2");
 					});
+
+					it("Should validate the forced default of an attribute the update doesn't set", async () => {
+						updateItemFunction = () => Promise.resolve({});
+						modelWithValidate((item) => item.status === "active", {"id": Number, "name": String, "status": {"type": String, "default": "active", "forceDefault": true}});
+
+						await callType.func(User).bind(User)({"id": 1}, {"name": "Bob"});
+						expect(validateCalls).toEqual([{"id": 1, "name": "Bob", "status": "active"}]);
+					});
+
+					it("Should validate with the schema that matches the attributes the update sets", async () => {
+						updateItemFunction = () => Promise.resolve({});
+						User = dynamoose.model("User", [
+							new dynamoose.Schema({"id": Number, "value": String}),
+							new dynamoose.Schema({"id": Number, "value": Number}, {"validate": (item) => item.value >= 0})
+						]);
+						new dynamoose.Table("User", [User]);
+
+						await expect(callType.func(User).bind(User)({"id": 1}, {"value": -1})).rejects.toEqual(new CustomError.ValidationError("{\"id\":1,\"value\":-1} had a schema validation error when trying to save the item."));
+						await expect(callType.func(User).bind(User)({"id": 1}, {"value": 1})).resolves.toEqual();
+					});
+
+					it("Should validate the same key value that the update's Key uses", async () => {
+						let counter = 0;
+						updateItemFunction = () => Promise.resolve({});
+						modelWithValidate((item) => item.id === 2, {"id": {"type": Number, "set": (value) => value + ++counter}, "name": String});
+
+						await callType.func(User).bind(User)({"id": 1}, {"name": "Bob"});
+						expect(updateItemParams.Key).toEqual({"id": {"N": "2"}});
+						expect(validateCalls).toEqual([{"id": 2, "name": "Bob"}]);
+					});
+
 				});
 
 				it("Should throw error if value not in enum", () => {
@@ -6209,6 +6262,7 @@ describe("Model", () => {
 
 		describe("Attributes named by an alias", () => {
 			let Aliased;
+			const aliasConflictError = new CustomError.InvalidParameter("Model.update names attribute \"d\" more than once (\"d\" and \"dee\"). Name each attribute once.");
 			beforeEach(() => {
 				Aliased = dynamoose.model("Aliased", [
 					new dynamoose.Schema({"id": {"type": String, "hashKey": true}, "a": String}),
@@ -6256,6 +6310,21 @@ describe("Model", () => {
 			it("Should apply the rules of the schema that has the alias", async () => {
 				await expect(Aliased.update({"id": "x"}, {"bee": undefined}, {"return": "request"})).rejects.toEqual(new CustomError.ValidationError("b is a required property but has no value when trying to save item"));
 			});
+
+			[
+				["an attribute and its alias in one object", {"d": "x", "dee": "y"}],
+				["an attribute and its alias with $SET", {"$SET": {"d": "x", "dee": "y"}}],
+				["an attribute with $SET and its alias with $REMOVE", {"$SET": {"d": "x"}, "$REMOVE": ["dee"]}]
+			].forEach(([name, update]) => {
+				it(`Should reject ${name} instead of writing the last value`, async () => {
+					await expect(Aliased.update({"id": "x"}, update, {"return": "request"})).rejects.toEqual(aliasConflictError);
+				});
+			});
+
+			it("Should pass the alias conflict error to the callback", async () => {
+				const error = await new Promise((resolve) => Aliased.update({"id": "x"}, {"d": "x", "dee": "y"}, {"return": "request"}, resolve));
+				expect(error).toEqual(aliasConflictError);
+			});
 		});
 
 		describe("An update with nothing to change", () => {
@@ -6291,6 +6360,12 @@ describe("Model", () => {
 
 			it("Should call back with the error", async () => {
 				const error = await new Promise((resolve) => User.update({"id": "x"}, {}, resolve));
+				expect(error).toEqual(emptyError);
+				expect(requests).toEqual(0);
+			});
+
+			it("Should call back with the error for return request", async () => {
+				const error = await new Promise((resolve) => User.update({"id": "x"}, {}, {"return": "request"}, resolve));
 				expect(error).toEqual(emptyError);
 				expect(requests).toEqual(0);
 			});
