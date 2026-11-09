@@ -117,6 +117,41 @@ describe("Item", () => {
 					expect(await new User(test.input).toDynamo(test.settings)).toEqual(test.output);
 				});
 			});
+
+			describe("Attributes the schema doesn't name", () => {
+				const input = {"id": 1, "data": {"key": null, "name": "a"}, "other": "b"};
+				const model = (settings) => {
+					const Model = dynamoose.model("UnknownUser", new dynamoose.Schema({"id": Number, "data": Object}, settings));
+					new dynamoose.Table("UnknownUser", [Model]);
+					return Model;
+				};
+
+				it("Should keep them when the schema's saveUnknown is true, as item.save does", async () => {
+					const Model = model({"saveUnknown": true});
+					expect(await new Model(input).toDynamo()).toEqual({"id": {"N": "1"}, "data": {"M": {"key": {"NULL": true}, "name": {"S": "a"}}}, "other": {"S": "b"}});
+				});
+
+				it("Should send the same item as item.save", async () => {
+					const Model = model({"saveUnknown": true});
+					const item = new Model(input);
+					expect(await item.toDynamo()).toEqual((await item.save({"return": "request"})).Item);
+				});
+
+				it("Should keep only the ones the schema's saveUnknown list allows", async () => {
+					const Model = model({"saveUnknown": ["data.**"]});
+					expect(await new Model(input).toDynamo()).toEqual({"id": {"N": "1"}, "data": {"M": {"key": {"NULL": true}, "name": {"S": "a"}}}});
+				});
+
+				it("Should leave them out when the schema has no saveUnknown", async () => {
+					const Model = model({});
+					expect(await new Model(input).toDynamo()).toEqual({"id": {"N": "1"}, "data": {"M": {}}});
+				});
+
+				it("Should leave them out when saveUnknown is false in the settings", async () => {
+					const Model = model({"saveUnknown": true});
+					expect(await new Model(input).toDynamo({"saveUnknown": false})).toEqual({"id": {"N": "1"}, "data": {"M": {}}});
+				});
+			});
 		});
 	});
 
