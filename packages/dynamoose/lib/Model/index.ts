@@ -1158,7 +1158,8 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				const result = await schemaSet({...givenKeyObject, ...Object.fromEntries([...convertedSet].filter(hasValue))});
 				// An update can't move an item to another key. A key attribute `set` leaves out is left as the key has it, and one it returns must be the key the update writes.
 				Object.keys(keyObject).forEach((attribute) => {
-					if (attribute in result && result[attribute] !== keyObject[attribute]) {
+					// Compared by value, so a copy of a binary key with the same bytes is the same key.
+					if (attribute in result && !utils.dynamoose.attribute_values_equal(result[attribute], keyObject[attribute])) {
 						throw new CustomError.InvalidParameter(`The schema's set function changed the key attribute ${attribute} from ${JSON.stringify(keyObject[attribute])} to ${JSON.stringify(result[attribute])}, but Model.update can't change an item's key.`);
 					}
 				});
