@@ -3288,6 +3288,21 @@ describe("Item", () => {
 				"output": {"id": "test", "data": ["hello", {"world": "universe"}]},
 				"schema": {"id": {"type": String}, "data": {"type": Array, "schema": dynamoose.type.ANY}}
 			},
+			// Only the first element of a list is type checked when the others have the same JavaScript type, so the others must keep their properties too.
+			{
+				"input": {"id": "test", "data": [{"a": 1}, {"b": 2}, {"c": {"d": 3}}]},
+				"output": {"id": "test", "data": [{"a": 1}, {"b": 2}, {"c": {"d": 3}}]},
+				"schema": {"id": {"type": String}, "data": {"type": Array, "schema": [{"type": Object, "schema": dynamoose.type.ANY}]}}
+			},
+			{
+				"input": [{"id": "test", "friends": [{"id": 1, "name": "Tim"}, {"id": 2, "name": "Bob"}, {"id": 3, "name": "Evan"}]}, {"type": "toDynamo", "customTypesDynamo": true}],
+				"output": {"id": "test", "friends": [1, 2, 3]},
+				"schema": () => {
+					const Friend = dynamoose.model("Friend", {"id": Number, "name": String});
+					new dynamoose.Table("Friend", [Friend], {"create": false, "waitForActive": false});
+					return {"id": {"type": String}, "friends": {"type": Array, "schema": [Friend]}};
+				}
+			},
 			{
 				"input": [{"id": "test"}, {"required": true}],
 				"output": {"id": "test"},
