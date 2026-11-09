@@ -60,6 +60,17 @@ describe("Schema", () => {
 		expect(() => new dynamoose.Schema({"id": String, "a1": Date, "b1": Date}, {"timestamps": {"createdAt": {"a1": Date}, "updatedAt": {"b1": Date}}}).getInternalProperties(internalProperties).settings).toThrow("Timestamp attributes must not be defined in schema.");
 	});
 
+	it("Should throw error if createdAtOnUpdate isn't a boolean", () => {
+		["true", 1, null, {}].forEach((value) => {
+			expect(() => new dynamoose.Schema({"id": String}, {"timestamps": true, "createdAtOnUpdate": value})).toThrow("createdAtOnUpdate must be a boolean.");
+		});
+	});
+
+	it("Should set createdAtOnUpdate setting", () => {
+		expect(new dynamoose.Schema({"id": String}, {"timestamps": true, "createdAtOnUpdate": true}).getInternalProperties(internalProperties).settings.createdAtOnUpdate).toEqual(true);
+		expect(new dynamoose.Schema({"id": String}, {"timestamps": true, "createdAtOnUpdate": false}).getInternalProperties(internalProperties).settings.createdAtOnUpdate).toEqual(false);
+	});
+
 	describe("updatedAt timestamp as a table key", () => {
 		it("Should throw error if an updatedAt timestamp is the rangeKey", () => {
 			expect(() => new dynamoose.Schema({"id": String}, {"timestamps": {"updatedAt": {"updatedAt": {"type": Date, "rangeKey": true}}}})).toThrow("The updatedAt timestamp attribute \"updatedAt\" must not be a hashKey or rangeKey.");

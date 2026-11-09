@@ -4373,6 +4373,37 @@ describe("Model", () => {
 					expect(error).toEqual(new CustomError.InvalidParameter("You must update all or none of the combine attributes when running Model.update. Missing combine attributes: createdAt."));
 				});
 
+				it("Should set createdAt with if_not_exists when the schema has createdAtOnUpdate set to true", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", new dynamoose.Schema({"id": Number, "name": String}, {"timestamps": true, "createdAtOnUpdate": true}));
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"name": "Charlie"});
+					expect(updateItemParams.ExpressionAttributeNames).toEqual({"#a0": "createdAt", "#a1": "updatedAt", "#a2": "name"});
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0 = if_not_exists(#a0, :v0), #a1 = :v1, #a2 = :v2");
+				});
+
+				it("Should not set createdAt when the schema has createdAtOnUpdate set to false", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", new dynamoose.Schema({"id": Number, "name": String}, {"timestamps": true, "createdAtOnUpdate": false}));
+					new dynamoose.Table("User", [User]);
+					const before = Date.now();
+					await callType.func(User).bind(User)({"id": 1}, {"name": "Charlie"});
+					const after = Date.now();
+					expect(updateItemParams.ExpressionAttributeNames).toEqual({"#a0": "updatedAt", "#a1": "name"});
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0 = :v0, #a1 = :v1");
+					expect(parseInt(updateItemParams.ExpressionAttributeValues[":v0"].N)).toBeWithinRange(before, after);
+				});
+
+				it("Should use the createdAt value passed in when the schema has createdAtOnUpdate set to false", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", new dynamoose.Schema({"id": Number, "name": String}, {"timestamps": true, "createdAtOnUpdate": false}));
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"name": "Charlie", "createdAt": new Date(1000)});
+					expect(updateItemParams.ExpressionAttributeNames).toEqual({"#a0": "updatedAt", "#a1": "name", "#a2": "createdAt"});
+					expect(updateItemParams.ExpressionAttributeValues[":v2"]).toEqual({"N": "1000"});
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0 = :v0, #a1 = :v1, #a2 = :v2");
+				});
+
 				it("Should not set a range key that has a forced default", async () => {
 					User = dynamoose.model("User", new dynamoose.Schema({"id": {"type": Number, "hashKey": true}, "updatedAt": {"type": Number, "rangeKey": true, "default": 1000, "forceDefault": true}, "name": String}));
 					new dynamoose.Table("User", [User]);
@@ -6322,6 +6353,35 @@ describe("Model", () => {
 			expect(request.ExpressionAttributeValues).toEqual({":v0": {"S": "dflt"}});
 		});
 
+		describe("Timestamps", () => {
+			let Stamped;
+			beforeEach(() => {
+				Stamped = dynamoose.model("Stamped", [
+					new dynamoose.Schema({"id": {"type": String, "hashKey": true}, "a": String}, {"timestamps": {"createdAt": "aCreated", "updatedAt": "aUpdated"}, "createdAtOnUpdate": false}),
+					new dynamoose.Schema({"id": {"type": String, "hashKey": true}, "b": String}, {"timestamps": true})
+				]);
+				new dynamoose.Table("Stamped", [Stamped], {"create": false, "waitForActive": false});
+			});
+
+			it("Should set the timestamps of the second schema, with createdAt set with if_not_exists, for an update that follows it", async () => {
+				const request = await Stamped.update({"id": "x"}, {"b": "y"}, {"return": "request"});
+				expect(request.ExpressionAttributeNames).toEqual({"#a0": "createdAt", "#a1": "updatedAt", "#a2": "b"});
+				expect(request.UpdateExpression).toEqual("SET #a0 = if_not_exists(#a0, :v0), #a1 = :v1, #a2 = :v2");
+			});
+
+			it("Should set only the updatedAt timestamp of the first schema, which has createdAtOnUpdate set to false, for an update that follows it", async () => {
+				const request = await Stamped.update({"id": "x"}, {"a": "y"}, {"return": "request"});
+				expect(request.ExpressionAttributeNames).toEqual({"#a0": "aUpdated", "#a1": "a"});
+				expect(request.UpdateExpression).toEqual("SET #a0 = :v0, #a1 = :v1");
+			});
+
+			it("Should set the timestamps of the schema a transaction update follows", async () => {
+				const result = await Stamped.transaction.update({"id": "x"}, {"b": "y"});
+				expect(result.Update.ExpressionAttributeNames).toEqual({"#a0": "createdAt", "#a1": "updatedAt", "#a2": "b"});
+				expect(result.Update.UpdateExpression).toEqual("SET #a0 = if_not_exists(#a0, :v0), #a1 = :v1, #a2 = :v2");
+			});
+		});
+
 		describe("Attributes named by an alias", () => {
 			let Aliased;
 			const aliasConflictError = new CustomError.InvalidParameter("Model.update names attribute \"d\" more than once (\"d\" and \"dee\"). Name each attribute once.");
@@ -7477,6 +7537,14 @@ describe("Model", () => {
 				expect(result.Update.ExpressionAttributeNames).toEqual({"#a0": "createdAt", "#a1": "updatedAt", "#a2": "name"});
 				expect(result.Update.UpdateExpression).toEqual("SET #a0 = if_not_exists(#a0, :v0), #a1 = :v1, #a2 = :v2");
 				expect(result.Update.ExpressionAttributeValues[":v0"]).toEqual(result.Update.ExpressionAttributeValues[":v1"]);
+			});
+
+			it("Should not set createdAt for a model whose schema has createdAtOnUpdate set to false", async () => {
+				User = dynamoose.model("User", new dynamoose.Schema({"id": Number, "name": String}, {"timestamps": true, "createdAtOnUpdate": false}));
+				new dynamoose.Table("User", [User]);
+				const result = await User.transaction.update({"id": 1}, {"name": "Bob"});
+				expect(result.Update.ExpressionAttributeNames).toEqual({"#a0": "updatedAt", "#a1": "name"});
+				expect(result.Update.UpdateExpression).toEqual("SET #a0 = :v0, #a1 = :v1");
 			});
 
 			it("Should remove a list attribute set to undefined", async () => {
