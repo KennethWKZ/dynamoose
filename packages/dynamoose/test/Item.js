@@ -45,7 +45,7 @@ describe("Item", () => {
 		new dynamoose.Table("User", [User], {"create": false, "waitForActive": false});
 		const user = new User({"data": {"key": null}, "id": "123"});
 		expect(user.id).toEqual("123");
-		expect((await user.toDynamo()).id).toEqual({"S": "123"});
+		expect(await user.toDynamo()).toEqual({"data": {"M": {"key": {"NULL": true}}}, "id": {"S": "123"}});
 	});
 
 	describe("DynamoDB Conversation Methods", () => {
