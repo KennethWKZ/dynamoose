@@ -202,6 +202,7 @@ export class Condition extends InternalPropertiesClass<ConditionInternalProperti
 					});
 				};
 				// Dynamoose numbers its own names and values (`#a0`, `:v0`), so it starts after the ones a raw condition uses, and neither replaces the other.
+				// It also adds suffixes to that number (`#a0_0` for a document path, `:v0_1` for BETWEEN and IN), so a raw `:v0_1` reserves 0 as well.
 				const rawIndexes = (input: ConditionStorageSettingsConditions): number[] => input.reduce((indexes: number[], entry) => {
 					if (!Array.isArray(entry)) {
 						return indexes;
@@ -210,7 +211,7 @@ export class Condition extends InternalPropertiesClass<ConditionInternalProperti
 						return [...indexes, ...rawIndexes(entry)];
 					}
 					const {ExpressionAttributeNames, ExpressionAttributeValues} = entry[RAW_GROUP];
-					return [...indexes, ...[...Object.keys(ExpressionAttributeNames), ...Object.keys(ExpressionAttributeValues || {})].map((key) => (/^(?:#a|:v)(\d+)$/).exec(key)).filter(Boolean).map((match) => parseInt(match[1]) + 1)];
+					return [...indexes, ...[...Object.keys(ExpressionAttributeNames), ...Object.keys(ExpressionAttributeValues || {})].map((key) => (/^(?:#a|:v)(\d+)(?:_\d+)?$/).exec(key)).filter(Boolean).map((match) => parseInt(match[1]) + 1)];
 				}, []);
 
 				const {raw} = this.getInternalProperties(internalProperties).settings;
@@ -233,10 +234,10 @@ export class Condition extends InternalPropertiesClass<ConditionInternalProperti
 						let expression = "";
 						if (Array.isArray(entry)) {
 							const result = entry[RAW_GROUP] ? await rawRequestObject(entry[RAW_GROUP]) : await main(entry);
-							// Two raw conditions can't give one name or value placeholder different meanings.
+							// Two raw conditions can't give one name or value placeholder different meanings. Equal values may differ in map key or set element order.
 							["ExpressionAttributeNames", "ExpressionAttributeValues"].forEach((property) => {
 								Object.entries(result[property] || {}).forEach(([key, value]) => {
-									if (key in object[property] && JSON.stringify(object[property][key]) !== JSON.stringify(value)) {
+									if (key in object[property] && !utils.dynamoose.attribute_values_equal(object[property][key], value)) {
 										throw new CustomError.InvalidParameter(`The raw condition uses "${key}" for ${JSON.stringify(value)}, but the condition already uses it for ${JSON.stringify(object[property][key])}. Give each raw condition its own placeholders.`);
 									}
 								});

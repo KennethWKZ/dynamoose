@@ -20,6 +20,7 @@ import parentKey from "./parentKey";
 import async_reduce from "./async_reduce";
 import keyBy from "./keyBy";
 import is_plain_object from "./is_plain_object";
+import normalize_number from "./normalize_number";
 
 export default {
 	combine_objects,
@@ -43,5 +44,6 @@ export default {
 	parentKey,
 	async_reduce,
 	keyBy,
-	is_plain_object
+	is_plain_object,
+	normalize_number
 };

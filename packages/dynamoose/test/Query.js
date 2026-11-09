@@ -2294,6 +2294,39 @@ describe("Query", () => {
 				});
 			});
 
+			it("Should give the hash key condition a free value placeholder when the raw condition uses :qhv", async () => {
+				await Model.query(new dynamoose.Condition().where("id").eq(1).parenthesis(raw("#fn > :qhv", {"#fn": "favoriteNumber"}, {":qhv": 5}))).exec();
+				expect(queryParams).toEqual({
+					"TableName": "Cat",
+					"KeyConditionExpression": "#qha1 = :qhv1",
+					"FilterExpression": "(#fn > :qhv)",
+					"ExpressionAttributeNames": {"#qha1": "id", "#fn": "favoriteNumber"},
+					"ExpressionAttributeValues": {":qhv1": {"N": "1"}, ":qhv": {"N": "5"}}
+				});
+			});
+
+			it("Should give the hash key condition a free name placeholder when the raw condition uses #qha", async () => {
+				await Model.query(new dynamoose.Condition().where("id").eq(1).parenthesis(raw("#qha > :fn", {"#qha": "favoriteNumber"}, {":fn": 5}))).exec();
+				expect(queryParams).toEqual({
+					"TableName": "Cat",
+					"KeyConditionExpression": "#qha1 = :qhv1",
+					"FilterExpression": "(#qha > :fn)",
+					"ExpressionAttributeNames": {"#qha1": "id", "#qha": "favoriteNumber"},
+					"ExpressionAttributeValues": {":qhv1": {"N": "1"}, ":fn": {"N": "5"}}
+				});
+			});
+
+			it("Should give the range key condition free value placeholders when the raw condition uses :qrv_1", async () => {
+				await RangeModel.query(new dynamoose.Condition().where("id").eq(1).and().where("name").between("a", "m").and().parenthesis(raw("#c = :qrv_1", {"#c": "color"}, {":qrv_1": "red"}))).exec();
+				expect(queryParams).toEqual({
+					"TableName": "Dog",
+					"KeyConditionExpression": "#qha = :qhv AND #qra1 BETWEEN :qrv1_1 AND :qrv1_2",
+					"FilterExpression": "(#c = :qrv_1)",
+					"ExpressionAttributeNames": {"#qha": "id", "#qra1": "name", "#c": "color"},
+					"ExpressionAttributeValues": {":qhv": {"N": "1"}, ":qrv1_1": {"S": "a"}, ":qrv1_2": {"S": "m"}, ":qrv_1": {"S": "red"}}
+				});
+			});
+
 			it("Should use a raw condition in parenthesis() in a scan", async () => {
 				const request = await Model.scan(new dynamoose.Condition().where("name").eq("Bob").or().parenthesis(new dynamoose.Condition({"FilterExpression": "attribute_exists(#fn)", "ExpressionAttributeNames": {"#fn": "favoriteNumber"}}))).getRequest();
 				expect(request).toEqual({"TableName": "Cat", "FilterExpression": "#a0 = :v0 OR (attribute_exists(#fn))", "ExpressionAttributeNames": {"#a0": "name", "#fn": "favoriteNumber"}, "ExpressionAttributeValues": {":v0": {"S": "Bob"}}});
@@ -2307,6 +2340,21 @@ describe("Query", () => {
 			it("Should allow two raw conditions that use one placeholder for the same value", async () => {
 				const request = await Model.scan(new dynamoose.Condition().parenthesis(raw("#fn > :n", {"#fn": "favoriteNumber"}, {":n": 5})).or().parenthesis(raw("#fn = :n", {"#fn": "favoriteNumber"}, {":n": 5}))).getRequest();
 				expect(request).toEqual({"TableName": "Cat", "FilterExpression": "(#fn > :n) OR (#fn = :n)", "ExpressionAttributeNames": {"#fn": "favoriteNumber"}, "ExpressionAttributeValues": {":n": {"N": "5"}}});
+			});
+
+			it("Should allow two raw conditions that use one placeholder for one map with its keys in another order", async () => {
+				const request = await Model.scan(new dynamoose.Condition().parenthesis(raw("#n = :m", {"#n": "name"}, {":m": {"a": 1, "b": 2}})).or().parenthesis(raw("#n <> :m", {"#n": "name"}, {":m": {"b": 2, "a": 1}}))).getRequest();
+				expect(request).toEqual({"TableName": "Cat", "FilterExpression": "(#n = :m) OR (#n <> :m)", "ExpressionAttributeNames": {"#n": "name"}, "ExpressionAttributeValues": {":m": {"M": {"a": {"N": "1"}, "b": {"N": "2"}}}}});
+			});
+
+			it("Should allow two raw conditions that use one placeholder for one set with its elements in another order", async () => {
+				const request = await Model.scan(new dynamoose.Condition().parenthesis(raw("#n = :s", {"#n": "name"}, {":s": {"SS": ["x", "y"]}})).or().parenthesis(raw("#n <> :s", {"#n": "name"}, {":s": {"SS": ["y", "x"]}}))).getRequest();
+				expect(request).toEqual({"TableName": "Cat", "FilterExpression": "(#n = :s) OR (#n <> :s)", "ExpressionAttributeNames": {"#n": "name"}, "ExpressionAttributeValues": {":s": {"SS": ["x", "y"]}}});
+			});
+
+			it("Should throw for two raw conditions that use one placeholder for maps with different values", async () => {
+				const condition = new dynamoose.Condition().parenthesis(raw("#n = :m", {"#n": "name"}, {":m": {"a": 1, "b": 2}})).or().parenthesis(raw("#n <> :m", {"#n": "name"}, {":m": {"b": 3, "a": 1}}));
+				await expect(Model.scan(condition).getRequest()).rejects.toEqual(new CustomError.InvalidParameter("The raw condition uses \":m\" for {\"M\":{\"b\":{\"N\":\"3\"},\"a\":{\"N\":\"1\"}}}, but the condition already uses it for {\"M\":{\"a\":{\"N\":\"1\"},\"b\":{\"N\":\"2\"}}}. Give each raw condition its own placeholders."));
 			});
 		});
 	});
