@@ -5,6 +5,7 @@ import getValueTypeCheckResult from "./getValueTypeCheckResult";
 import {itemToJSON} from "./itemToJSON";
 import emptyKeyValueProblem from "./emptyKeyValueProblem";
 import {wildcard_allowed_check} from "dynamoose-utils";
+import attribute_values_equal from "./attribute_values_equal";
 
 export default {
 	get_provisioned_throughput,
@@ -13,5 +14,6 @@ export default {
 	getValueTypeCheckResult,
 	itemToJSON,
 	emptyKeyValueProblem,
-	wildcard_allowed_check
+	wildcard_allowed_check,
+	attribute_values_equal
 };
