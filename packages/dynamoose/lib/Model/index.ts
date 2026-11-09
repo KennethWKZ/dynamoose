@@ -1290,8 +1290,10 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 					}, {})
 				};
 
-				// The update may create the item, so createdAt is written with `if_not_exists`: DynamoDB keeps the stored value and only sets it on a new item.
-				const itemFunctionSettings: ItemObjectFromSchemaSettings = {"updateTimestamps": {"updatedAt": true, "createdAt": true}, "customTypesDynamo": true, "type": "toDynamo", "mapAttributes": true};
+				// The update may create the item, so createdAt is written with `if_not_exists`: DynamoDB keeps the stored value and only sets it on a new item. A schema with `createdAtOnUpdate: false` leaves createdAt out.
+				const createdAtOnUpdate = schema.getInternalProperties(internalProperties).settings.createdAtOnUpdate !== false;
+				// The timestamps are those of the schema the update follows. Picked from the empty object instead, a model with several schemas would get the first schema's.
+				const itemFunctionSettings: ItemObjectFromSchemaSettings = {"schema": schema, "updateTimestamps": {"updatedAt": true, "createdAt": createdAtOnUpdate}, "customTypesDynamo": true, "type": "toDynamo", "mapAttributes": true};
 				const defaultObjectFromSchema = await this.Item.objectFromSchema(await this.Item.prepareForObjectFromSchema({}, this, itemFunctionSettings), this, itemFunctionSettings);
 				const createdAtAttributes = schema.getInternalProperties(internalProperties).getTimestampAttributes().filter((prop) => prop.type === "createdAt").map((prop) => prop.name);
 				// DynamoDB rejects an update that sets a key attribute, so a timestamp that is part of the key is left as the key has it.

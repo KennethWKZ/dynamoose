@@ -578,7 +578,7 @@ async function updateNestedObjects (object: any, parts: string[], func: (value: 
 // This function will mutate the object passed in to run any actions to conform to the schema that cannot be achieved through non mutating methods in Item.objectFromSchema (setting timestamps, etc.)
 Item.prepareForObjectFromSchema = async function<T extends InternalPropertiesClass<any>>(object: T, model: Model<Item>, settings: ItemObjectFromSchemaSettings): Promise<T> {
 	if (settings.updateTimestamps) {
-		const schema: Schema = model.getInternalProperties(internalProperties).schemaForObject(object);
+		const schema: Schema = settings.schema || model.getInternalProperties(internalProperties).schemaForObject(object);
 		if (schema.getInternalProperties(internalProperties).settings.timestamps && settings.type === "toDynamo") {
 			const date = new Date();
 			const timeResult = (prop) => {
@@ -599,7 +599,7 @@ Item.prepareForObjectFromSchema = async function<T extends InternalPropertiesCla
 
 			const createdAtProperties = timestampProperties.filter((val) => val.type === "createdAt");
 			const updatedAtProperties = timestampProperties.filter((val) => val.type === "updatedAt");
-			// `true` sets createdAt only on an item that isn't stored yet. `{"createdAt": true}` always sets it: `Model.update` uses that and writes it with `if_not_exists`, so only DynamoDB decides whether the item is new.
+			// `true` sets createdAt only on an item that isn't stored yet. `{"createdAt": true}` always sets it: `Model.update` uses that, unless the schema has `createdAtOnUpdate: false`, and writes it with `if_not_exists`, so only DynamoDB decides whether the item is new.
 			const isNewItem = Boolean(object.getInternalProperties && object.getInternalProperties(internalProperties) && !object.getInternalProperties(internalProperties).storedInDynamo);
 			// `Model.update` passes the object form. It writes top-level attributes whole, so setting a nested schema's timestamp (`address.updatedAt`) would replace that map with just the timestamp.
 			const isSettable = (prop: {name: string}): boolean => typeof settings.updateTimestamps === "boolean" || !prop.name.includes(".");
