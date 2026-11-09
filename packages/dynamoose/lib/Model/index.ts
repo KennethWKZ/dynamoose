@@ -543,7 +543,8 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 			},
 			// This function returns the DynamoDB property name for a given attribute (alias or property name). For example if you have a `pk` with an alias of `userID` and pass in `userID` it will return `pk`. If you pass in `pk` it will return `pk`.
 			"dynamoPropertyForAttribute": async (attribute: string): Promise<string> => {
-				const obj = await Item.objectFromSchema({[attribute]: true}, this, {"type": "toDynamo", "modifiers": ["set"], "typeCheck": false, "mapAttributes": true});
+				// Only the name is mapped. `set` functions aren't run: `true` stands in for the value, and a schema's `set` can add attributes, either of which gave the wrong name or threw (`value.toLowerCase is not a function`).
+				const obj = await Item.objectFromSchema({[attribute]: true}, this, {"type": "toDynamo", "typeCheck": false, "mapAttributes": true});
 				return Object.keys(obj)[0];
 			},
 			"getCreateTableAttributeParams": async (): Promise<Pick<DynamoDB.CreateTableInput, "AttributeDefinitions" | "KeySchema" | "GlobalSecondaryIndexes" | "LocalSecondaryIndexes">> => {
@@ -1367,13 +1368,15 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				}
 			});
 
+			// DynamoDB rejects an update that sets a key attribute of the table, so a forced default on one isn't written. The item keeps the key it has.
+			const tableKeyAttributes = [this.getInternalProperties(internalProperties).getHashKey(), this.getInternalProperties(internalProperties).getRangeKey()];
 			await Promise.all(schema.attributes().map(async (attribute) => {
 				// A nested attribute (e.g. "config.timeout") gets its forced default from objectFromSchema when the update writes its parent. Written here, its dotted path would become the name of a new top-level attribute.
 				if (attribute.includes(".")) {
 					return;
 				}
 				const defaultValue = await schema.defaultCheck(attribute, undefined, {"forceDefault": true});
-				if (defaultValue && !topLevelNameKeys.has(attribute)) {
+				if (defaultValue && !tableKeyAttributes.includes(attribute) && !topLevelNameKeys.has(attribute)) {
 					const updateType = updateTypes.find((a) => a.name === "$SET");
 
 					returnObject.ExpressionAttributeNames[`#a${index}`] = attribute;
