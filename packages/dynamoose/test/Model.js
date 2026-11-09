@@ -4619,8 +4619,9 @@ describe("Model", () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", new dynamoose.Schema({"id": Number, "name": String, "address": new dynamoose.Schema({"street": String}, {"timestamps": true})}, {"timestamps": true}));
 					new dynamoose.Table("User", [User]);
-					const date = Date.now();
+					const before = Date.now();
 					await callType.func(User).bind(User)({"id": 1}, {"name": "Charlie"});
+					const after = Date.now();
 					expect(updateItemParams).toEqual({
 						"ExpressionAttributeNames": {
 							"#a0": "createdAt",
@@ -4647,7 +4648,7 @@ describe("Model", () => {
 						"TableName": "User",
 						"ReturnValues": "ALL_NEW"
 					});
-					expect(parseInt(updateItemParams.ExpressionAttributeValues[":v1"].N)).toBeWithinRange(date - 10, date + 10);
+					expect(parseInt(updateItemParams.ExpressionAttributeValues[":v1"].N)).toBeWithinRange(before, after);
 				});
 
 				describe("Nested schema with timestamps", () => {
@@ -4755,8 +4756,9 @@ describe("Model", () => {
 							updateItemFunction = () => Promise.resolve({});
 							User = dynamoose.model("User", test.schema());
 							new dynamoose.Table("User", [User]);
-							const date = Date.now();
+							const before = Date.now();
 							await callType.func(User).bind(User)({"id": 1}, test.update);
+							const after = Date.now();
 							expect(updateItemParams).toEqual({
 								"ExpressionAttributeNames": test.names,
 								"ExpressionAttributeValues": {
@@ -4777,7 +4779,7 @@ describe("Model", () => {
 								"TableName": "User",
 								"ReturnValues": "ALL_NEW"
 							});
-							expect(parseInt(updateItemParams.ExpressionAttributeValues[":v1"].N)).toBeWithinRange(date - 10, date + 10);
+							expect(parseInt(updateItemParams.ExpressionAttributeValues[":v1"].N)).toBeWithinRange(before, after);
 						});
 					});
 				});
@@ -7875,8 +7877,9 @@ describe("Model", () => {
 			it("Should only set the top level timestamps with a nested schema with timestamps", async () => {
 				User = dynamoose.model("User", new dynamoose.Schema({"id": Number, "name": String, "address": new dynamoose.Schema({"street": String}, {"timestamps": true})}, {"timestamps": true}));
 				new dynamoose.Table("User", [User]);
-				const date = Date.now();
+				const before = Date.now();
 				const result = await User.transaction.update({"id": 1}, {"name": "Bob"});
+				const after = Date.now();
 				expect(result).toEqual({
 					"Update": {
 						"Key": {"id": {"N": "1"}},
@@ -7894,7 +7897,7 @@ describe("Model", () => {
 						"TableName": "User"
 					}
 				});
-				expect(parseInt(result.Update.ExpressionAttributeValues[":v1"].N)).toBeWithinRange(date - 10, date + 10);
+				expect(parseInt(result.Update.ExpressionAttributeValues[":v1"].N)).toBeWithinRange(before, after);
 			});
 
 			it("Should print warning if passing callback", () => {
