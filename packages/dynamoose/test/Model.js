@@ -4418,6 +4418,27 @@ describe("Model", () => {
 					expect(updateItemParams.UpdateExpression).toEqual("REMOVE #a1 SET #a0 = if_not_exists(#a0, :v0)");
 				});
 
+				it("Should use a custom updatedAt attribute passed in with $SET instead of the current time", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", new dynamoose.Schema({"id": Number, "name": String}, {"timestamps": {"updatedAt": "modified"}}));
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$SET": {"modified": new Date(1000)}});
+					expect(updateItemParams.ExpressionAttributeNames).toEqual({"#a0": "modified"});
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"N": "1000"}});
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0 = :v0");
+				});
+
+				it("Should set an updatedAt that is a global index key", async () => {
+					User = dynamoose.model("User", new dynamoose.Schema({"id": Number, "name": String}, {"timestamps": {"updatedAt": {"updatedAt": {"type": Date, "index": {"name": "byUpdatedAt", "type": "global"}}}}}));
+					new dynamoose.Table("User", [User]);
+					const before = Date.now();
+					const request = await callType.func(User).bind(User)({"id": 1}, {"name": "Charlie"}, {"return": "request"});
+					const after = Date.now();
+					expect(request.ExpressionAttributeNames).toEqual({"#a0": "updatedAt", "#a1": "name"});
+					expect(request.UpdateExpression).toEqual("SET #a0 = :v0, #a1 = :v1");
+					expect(parseInt(request.ExpressionAttributeValues[":v0"].N)).toBeWithinRange(before, after);
+				});
+
 				it("Should send correct params to updateItem for timestamps with a nested schema with timestamps", async () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", new dynamoose.Schema({"id": Number, "name": String, "address": new dynamoose.Schema({"street": String}, {"timestamps": true})}, {"timestamps": true}));
@@ -5255,6 +5276,21 @@ describe("Model", () => {
 					new dynamoose.Table("User", [User]);
 
 					return expect(callType.func(User).bind(User)({"id": 1}, {"data": {"name": "Charlie"}})).rejects.toEqual(new CustomError.ValidationError("data.age is a required property but has no value when trying to save item"));
+				});
+
+				it("Should flatten the item once when checking nested required attributes", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "lines": {"type": Array, "schema": [{"type": Object, "schema": {"sku": {"type": String, "required": true}, "qty": {"type": Number, "required": true}}}]}});
+					new dynamoose.Table("User", [User]);
+					const lines = Array.from({"length": 50}, (_, index) => ({"sku": `sku-${index}`, "qty": index}));
+					// Flattening the item once per attribute made an update with a long list quadratic.
+					const keys = jest.spyOn(require("js-object-utilities"), "keys");
+					try {
+						await callType.func(User).bind(User)({"id": 1}, {"lines": lines});
+						expect(keys).toHaveBeenCalledTimes(1);
+					} finally {
+						keys.mockRestore();
+					}
 				});
 
 				it("Should throw error if trying to replace object with $SET without nested required property", () => {
