@@ -82,6 +82,13 @@ describe("model.itemFromDynamo", () => {
 		await expect(User.itemFromDynamo({"id": 1})).rejects.toEqual(new CustomError.InvalidParameter("itemFromDynamo takes an item in DynamoDB's format, such as {\"id\": {\"N\": \"1\"}}."));
 	});
 
+	it("Should throw an error for a DynamoDB item with a null value inside", async () => {
+		const error = new CustomError.InvalidParameter("itemFromDynamo takes an item in DynamoDB's format, such as {\"id\": {\"N\": \"1\"}}.");
+		await expect(User.itemFromDynamo({"id": {"N": "1"}, "a": {"M": null}})).rejects.toEqual(error);
+		await expect(User.itemFromDynamo({"id": {"N": "1"}, "a": {"L": [null]}})).rejects.toEqual(error);
+		await expect(User.itemFromDynamo({"id": {"N": "1"}, "a": {"M": {"b": {"S": null}}}})).rejects.toEqual(error);
+	});
+
 	it("Should not change the image passed in", async () => {
 		const copy = JSON.parse(JSON.stringify(image));
 		await User.itemFromDynamo(copy);
