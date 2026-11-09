@@ -145,7 +145,8 @@ function Transaction (transactions: Transactions, settings?: TransactionSettings
 			}
 		}
 		const retry = settings.retry ?? {"attempts": 0};
-		if (!Number.isInteger(retry?.attempts) || retry.attempts < 0 || retry.delay !== undefined && !(typeof retry.delay === "number" && retry.delay >= 0)) {
+		// `retry` is never undefined or null here: without the setting it is `{"attempts": 0}`.
+		if (!Number.isInteger(retry.attempts) || retry.attempts < 0 || retry.delay !== undefined && !(typeof retry.delay === "number" && retry.delay >= 0)) {
 			throw new Error.InvalidParameter("retry.attempts must be a whole number of 0 or more, and retry.delay a number of milliseconds of 0 or more.");
 		}
 
@@ -233,7 +234,7 @@ function Transaction (transactions: Transactions, settings?: TransactionSettings
 			} catch (error) {
 				if (attempt <= retry.attempts && isRetryable(error)) {
 					// A canceled transaction is finished and wrote nothing, so a token Dynamoose made is replaced. A token the caller passed is always kept.
-					if (generatesToken && error?.name === "TransactionCanceledException") {
+					if (generatesToken && error.name === "TransactionCanceledException") {
 						sentParams = {...sentParams, "ClientRequestToken": randomUUID()};
 					}
 					await utils.timeout(Math.random() * Math.min(20000, (retry.delay ?? 100) * 2 ** (attempt - 1)));

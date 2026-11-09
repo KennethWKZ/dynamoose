@@ -553,6 +553,31 @@ describe("Transaction", () => {
 					});
 				});
 
+				// The client is the caller's, so what it rejects with isn't always an AWS SDK error.
+				it("Should not retry, and pass on, a rejection without an error", async () => {
+					writeParams = [];
+					dynamoose.aws.ddb.set({
+						"transactWriteItems": (params) => {
+							writeParams.push(params);
+							return writeParams.length === 1 ? Promise.reject(undefined) : Promise.resolve({});
+						}
+					});
+					const result = await callType.func(dynamoose.transaction)([User.transaction.create({"id": 1, "name": "Bob"})], {"retry": {"attempts": 3, "delay": 0}}).catch((e) => e);
+					expect(result).toBeUndefined();
+					expect(writeParams.length).toEqual(1);
+				});
+
+				it("Should not retry a cancellation with an empty reason, and convert the stored item of the other reasons", async () => {
+					const error = Object.assign(new Error("Transaction cancelled"), {"name": "TransactionCanceledException", "CancellationReasons": [null, {"Code": "ConditionalCheckFailed", "Item": {"id": {"N": "2"}, "name": {"S": "Tim"}}}]});
+					mockAWS([error, {}]);
+					const result = await callType.func(dynamoose.transaction)([User.transaction.create({"id": 1, "name": "Bob"}), User.transaction.create({"id": 2, "name": "Tim"})], {"retry": {"attempts": 3, "delay": 0}}).catch((e) => e);
+					expect(result).toBe(error);
+					expect(writeParams.length).toEqual(1);
+					expect(result.conditionCheckFailureItems.length).toEqual(2);
+					expect(result.conditionCheckFailureItems[0]).toBeUndefined();
+					expect(result.conditionCheckFailureItems[1].toJSON()).toEqual({"id": 2, "name": "Tim"});
+				});
+
 				[["a cancellation without reasons", Object.assign(new Error("Transaction cancelled"), {"name": "TransactionCanceledException"})]].forEach(([label, error]) => {
 					it(`Should not retry ${label}`, async () => {
 						writeParams = [];

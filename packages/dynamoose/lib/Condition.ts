@@ -34,7 +34,7 @@ type ConditionRequestObjectResult = {ExpressionAttributeNames?: ExpressionAttrib
 interface ConditionComparisonType {
 	name: ConditionComparisonComparatorName;
 	typeName: ConditionComparisonComparatorDynamoName;
-	not?: ConditionComparisonComparatorDynamoName;
+	not: ConditionComparisonComparatorDynamoName;
 	multipleArguments?: boolean;
 }
 enum ConditionComparisonComparatorName {
@@ -517,10 +517,8 @@ function finalizePending (instance: Condition): void {
 	const pending = instance.getInternalProperties(internalProperties).settings.pending;
 
 	let dynamoNameType: ConditionComparisonComparatorDynamoName;
+	// Every comparison has a negated form, so `not()` can precede any of them.
 	if (pending.not === true) {
-		if (!pending.type.not) {
-			throw new CustomError.InvalidFilterComparison(`${pending.type.typeName} can not follow not()`);
-		}
 		dynamoNameType = pending.type.not;
 	} else {
 		dynamoNameType = pending.type.typeName;
