@@ -110,12 +110,12 @@ const schemaForUpdate = (schemas: Schema[], updateObj: ObjectType, correctnessSc
 	const scores = correctnessScores(setValues);
 	return schemas[candidates.reduce((best, index) => scores[index] > scores[best] ? index : best)];
 };
-// The same string for two DynamoDB keys only when they name the same item. A number is compared by its value and a binary value by its bytes, as DynamoDB does.
+// The same string for two DynamoDB keys only when they name the same item. A number is compared by its exact value and a binary value by its bytes, as DynamoDB does.
 // Every item passed in has a value for each key attribute: keys are checked before they are sent, and batchGet asks DynamoDB for the key attributes of the items it returns.
 const keyString = (item: AttributeMap, keyAttributes: string[]): string => JSON.stringify(keyAttributes.map((attribute) => {
 	const value: any = item[attribute];
 	if (value.N !== undefined) {
-		return {"N": String(Number(value.N))};
+		return {"N": utils.normalize_number(value.N)};
 	}
 	if (value.B !== undefined) {
 		return {"B": Buffer.from(value.B).toString("base64")};
