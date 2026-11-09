@@ -92,6 +92,10 @@ export class Item extends InternalPropertiesClass<ItemInternalProperties> {
 		}
 		const keys = Object.keys(value);
 		const key = keys[0];
+		// No attribute type holds null (`NULL` holds `true`), and `typeof null` is "object", so it is ruled out before it reaches `Object.keys`.
+		if (value[key] === null) {
+			return false;
+		}
 		const nestedResult = typeof value[key] === "object" && !(value[key] instanceof Buffer) && !(value[key] instanceof Uint8Array) ? Array.isArray(value[key]) ? value[key].every((value) => Item.isDynamoObject(value, true)) : Item.isDynamoObject(value[key]) : true;
 		const {Schema} = require("./Schema");
 		const attributeType = Schema.attributeTypes.findDynamoDBType(key);
@@ -99,6 +103,10 @@ export class Item extends InternalPropertiesClass<ItemInternalProperties> {
 	}
 	// This function will return null if it's unknown if it is a Dynamo object (ex. empty object). It will return true if it is a Dynamo object and false if it's not.
 	static isDynamoObject (object: ObjectType, recursive?: boolean): boolean | null {
+		// A list can hold null or undefined, as `{"L": [null]}`, which is not a DynamoDB value.
+		if (object === null || object === undefined) {
+			return false;
+		}
 		const keys = Object.keys(object);
 		const values = Object.values(object);
 		if (keys.length === 0) {
