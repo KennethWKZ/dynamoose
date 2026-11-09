@@ -84,16 +84,31 @@ const attributeNamesForAliases = (schema: Schema, updateObj: ObjectType): Object
 	}, {});
 };
 // The schema whose rules an update follows on a model with several schemas: the one that defines the most of the attribute names the update writes, by name or alias, so an attribute only a later schema defines gets that schema's rules. A tie keeps the first schema.
-const schemaForUpdate = (schemas: Schema[], updateObj: ObjectType): Schema => {
+// When several schemas define as many of those names, the values the update sets break the tie, scored as `schemaForObject` scores an item (`{"value": 5}` follows the schema where `value` is a Number), and then the first one wins.
+const schemaForUpdate = (schemas: Schema[], updateObj: ObjectType, correctnessScores: (object: ObjectType) => number[]): Schema => {
 	if (schemas.length === 1) {
 		return schemas[0];
 	}
 	const names = updateAttributeNames(updateObj);
-	const definedCount = (schema: Schema): number => {
+	const definedCounts = schemas.map((schema) => {
 		const aliases = schema.getInternalProperties(internalProperties).getMapSettingObject();
 		return names.filter((name) => schema.attributes().includes(name) || Object.prototype.hasOwnProperty.call(aliases, name)).length;
-	};
-	return schemas.reduce((best, schema) => definedCount(schema) > definedCount(best) ? schema : best);
+	});
+	const mostDefined = Math.max(...definedCounts);
+	const candidates = schemas.map((_, index) => index).filter((index) => definedCounts[index] === mostDefined);
+	if (candidates.length === 1) {
+		return schemas[candidates[0]];
+	}
+	// The values the update sets, plain and under `$SET`. An `undefined` value matches no type, so it is left out rather than scoring every schema 0.
+	const setValues = Object.entries(updateObj).reduce((result: ObjectType, [key, value]) => {
+		const entries = !isUpdateOperator(key, value) ? [[key, value]] : key === "$SET" ? Object.entries(value) : [];
+		entries.filter(([, entryValue]) => entryValue !== undefined && entryValue !== type.UNDEFINED).forEach(([name, entryValue]) => {
+			result[name] = entryValue;
+		});
+		return result;
+	}, {});
+	const scores = correctnessScores(setValues);
+	return schemas[candidates.reduce((best, index) => scores[index] > scores[best] ? index : best)];
 };
 // The same string for two DynamoDB keys only when they name the same item. A number is compared by its value and a binary value by its bytes, as DynamoDB does.
 // Every item passed in has a value for each key attribute: keys are checked before they are sent, and batchGet asks DynamoDB for the key attributes of the items it returns.
@@ -1088,7 +1103,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 			if (isKeyAndUpdate) {
 				updateObj = utils.deep_copy(keyObj) as DeepPartial<T>;
 			}
-			const schema = schemaForUpdate(this.getInternalProperties(internalProperties).schemas, updateObj);
+			const schema = schemaForUpdate(this.getInternalProperties(internalProperties).schemas, updateObj, this.getInternalProperties(internalProperties).schemaCorrectnessScores);
 			updateObj = attributeNamesForAliases(schema, updateObj) as DeepPartial<T>;
 			// The key and the update in one object: the key attributes, which can be named by an alias, are the key, not part of the update.
 			if (isKeyAndUpdate) {
@@ -1099,8 +1114,6 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 			const ifNotExistsNames: string[] = [];
 			const updateTypeNames = updateTypes.map((a) => a.name);
 			const setUpdateType = updateTypes.find((a) => a.name === "$SET");
-			// The `$SET` values as the caller passed them, before conversion. They pick the schema whose `validate` runs, as `schemaForObject` does for a save.
-			const setInput: ObjectType = {};
 			const attributeType = (attribute: string, value: any): string | string[] => {
 				try {
 					return schema.getAttributeType(attribute, value, {"unknownAttributeAllowed": true});
@@ -1120,9 +1133,9 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 					const dynamoType = attributeType(subKey, subValue);
 					const merged = isMergedObject(subKey, subValue, dynamoType);
 					const wrapInList = !merged && dynamoType === "L" && !Array.isArray(subValue);
-					const objectFromSchemaSettings = merged ? {...setUpdateType.objectFromSchemaSettings, "type": "toDynamo", "customTypesDynamo": true, "saveUnknown": true, "mapAttributes": true, "required": false} : {"type": "toDynamo", "customTypesDynamo": true, "saveUnknown": true, "mapAttributes": true, ...setUpdateType.objectFromSchemaSettings};
+					// Converted with the schema the update follows, so its `enum`, `validate` and `set` settings apply rather than those of whichever schema matches the attribute alone.
+					const objectFromSchemaSettings = merged ? {...setUpdateType.objectFromSchemaSettings, "schema": schema, "type": "toDynamo", "customTypesDynamo": true, "saveUnknown": true, "mapAttributes": true, "required": false} : {"schema": schema, "type": "toDynamo", "customTypesDynamo": true, "saveUnknown": true, "mapAttributes": true, ...setUpdateType.objectFromSchemaSettings};
 					convertedSet.set(subKey, (await this.Item.objectFromSchema({[subKey]: wrapInList ? [subValue] : subValue}, this, objectFromSchemaSettings as any))[subKey]);
-					setInput[subKey] = subValue;
 				}
 			}
 			const hasValue = ([, value]: [string, any]): boolean => value !== undefined && value !== type.UNDEFINED;
@@ -1220,7 +1233,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 					if (!updateType.attributeOnly && subValue !== dynamooseUndefined && !isConvertedSet) {
 						// A single value for a list attribute is wrapped in a list (so `$ADD` appends it). `undefined` is not wrapped, so it is removed below as it is for any other attribute.
 						const wrapInList = dynamoType === "L" && subValue !== undefined && !Array.isArray(subValue);
-						subValue = (await this.Item.objectFromSchema({[subKey]: wrapInList ? [subValue] : subValue}, this, {"type": "toDynamo", "customTypesDynamo": true, "saveUnknown": true, "mapAttributes": true, ...updateType.objectFromSchemaSettings} as any))[subKey];
+						subValue = (await this.Item.objectFromSchema({[subKey]: wrapInList ? [subValue] : subValue}, this, {"schema": schema, "type": "toDynamo", "customTypesDynamo": true, "saveUnknown": true, "mapAttributes": true, ...updateType.objectFromSchemaSettings} as any))[subKey];
 					}
 
 					if (subValue === dynamooseUndefined || subValue === undefined) {
@@ -1393,9 +1406,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 
 			// The schema's `validate` can't see the stored item, so it runs once, on the key and the values the update sets, after they're final (forced defaults, timestamps and Combine values included). `$ADD`, `$REMOVE` and `$DELETE` and list appends aren't validated, as they set no value that is known here.
 			if (writesValue) {
-				// The schema matching the caller's `$SET` input, as a save and a per-attribute conversion pick it, rather than always the first one.
-				const validatingSchema = Object.keys(setInput).length > 0 ? this.getInternalProperties(internalProperties).schemaForObject(setInput) : schema;
-				const schemaValidator = validatingSchema.getInternalProperties(internalProperties).settings.validate;
+				const schemaValidator = schema.getInternalProperties(internalProperties).settings.validate;
 				if (schemaValidator) {
 					const item = {...await getKeyObject(), ...setAttributes};
 					if (!await schemaValidator(item)) {
