@@ -114,6 +114,7 @@
 - Fixed `Model.batchGet` with an `attributes` setting that leaves out the table's hash or range key returning no items. DynamoDB returned the items, but without their key attributes they couldn't be matched to the keys, so they were dropped. The key attributes are now requested too, and left out of the returned items unless `attributes` lists them, as `Model.get` does
 - Fixed `Model.itemFromDynamo` throwing `TypeError: Cannot convert undefined or null to object` for an item with a null value where an attribute value belongs, such as `{"a": {"M": null}}` or `{"a": {"L": [null]}}`. It now throws the `InvalidParameter` error it throws for any other item that isn't in DynamoDB's format
 - Fixed `item.toDynamo()` leaving out every attribute the schema doesn't name, even when the schema's `saveUnknown` setting allows it, so its result differed from what `item.save` stores (#1679). It now applies the schema's `saveUnknown` setting, unless `saveUnknown: false` is passed in its settings
+- Fixed `item.save`, `Model.create`, `Model.batchPut` and `Model.update` with a list of two or more models (`{"type": Array, "schema": [User]}`) or of `dynamoose.type.ANY` objects. Only the first element of such a list was type checked, so the properties of every other element were removed as properties the schema doesn't name: a list of models threw `Unsupported type passed: [object Object]` (as did saving an item after `populate` filled such a list), and a list of `dynamoose.type.ANY` objects was saved with every element after the first one empty
 
 ### Other
 

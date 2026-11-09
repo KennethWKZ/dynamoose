@@ -144,6 +144,14 @@ describe("Populate", () => {
 					]);
 				});
 
+				it("Should save a populated list of models as their keys", async () => {
+					const Game = gameWith({"type": Array, "schema": [Person]});
+					const game = new Game({"id": 9, "players": [1, 2]});
+					await responseType.func(game).bind(game)();
+					const request = await game.save({"return": "request"});
+					expect(request.Item).toEqual({"id": {"N": "9"}, "players": {"L": [{"N": "1"}, {"N": "2"}]}});
+				});
+
 				describe("Guards", () => {
 					it("Should still populate a Set in an attribute with a model and other types", async () => {
 						const Game = gameWith([Person, String]);
