@@ -48,6 +48,13 @@ describe("Item", () => {
 		expect(await user.toDynamo()).toEqual({"data": {"M": {"key": {"NULL": true}}}, "id": {"S": "123"}});
 	});
 
+	it("Should keep an object with a null value under a DynamoDB type name as it is passed", () => {
+		const User = dynamoose.model("User", {"id": Number, "data": Object}, {});
+		new dynamoose.Table("User", [User], {"create": false, "waitForActive": false});
+		const user = new User({"data": {"M": null}});
+		expect(user.data).toEqual({"M": null});
+	});
+
 	describe("DynamoDB Conversation Methods", () => {
 		let User;
 		beforeEach(() => {
