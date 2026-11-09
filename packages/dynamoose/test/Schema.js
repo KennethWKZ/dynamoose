@@ -69,6 +69,15 @@ describe("Schema", () => {
 			expect(() => new dynamoose.Schema({"name": String}, {"timestamps": {"updatedAt": {"modified": {"type": Date, "hashKey": true}}}})).toThrow("The updatedAt timestamp attribute \"modified\" must not be a hashKey or rangeKey.");
 		});
 
+		it("Should throw error if an updatedAt timestamp is the implicit hashKey", () => {
+			// Integer-like names sort first in Object.keys, so with no explicit hashKey the timestamp becomes the hashKey.
+			expect(() => new dynamoose.Schema({"id": String}, {"timestamps": {"updatedAt": "0"}})).toThrow("The updatedAt timestamp attribute \"0\" must not be a hashKey or rangeKey.");
+		});
+
+		it("Should not throw error if an updatedAt timestamp is not the implicit hashKey", () => {
+			expect(() => new dynamoose.Schema({"id": String}, {"timestamps": {"updatedAt": "updated"}})).not.toThrow();
+		});
+
 		it("Should throw error if one of several updatedAt timestamps is a key", () => {
 			expect(() => new dynamoose.Schema({"id": String}, {"timestamps": {"createdAt": "createdAt", "updatedAt": {"updated": Date, "modified": {"type": Date, "rangeKey": true}}}})).toThrow("The updatedAt timestamp attribute \"modified\" must not be a hashKey or rangeKey.");
 		});
@@ -181,6 +190,16 @@ describe("Schema", () => {
 			new dynamoose.Schema(definition, settings);
 			expect(Object.keys(definition)).toEqual(["id", "name"]);
 			expect(settings.timestamps).toEqual(true);
+		});
+
+		it("Should not enable timestamps from an own __proto__ key in a settings object parsed from JSON", () => {
+			const settings = JSON.parse("{\"__proto__\":{\"timestamps\":true}}");
+			expect(new dynamoose.Schema({"id": String}, settings).attributes()).toEqual(["id"]);
+		});
+
+		it("Should drop an own __proto__ key in a schema definition parsed from JSON, as before", () => {
+			const definition = JSON.parse("{\"id\":\"String\",\"__proto__\":\"String\"}");
+			expect(new dynamoose.Schema(definition).attributes()).toEqual(["id"]);
 		});
 
 		it("Should not replace a nested Schema in an object in the schema definition", () => {

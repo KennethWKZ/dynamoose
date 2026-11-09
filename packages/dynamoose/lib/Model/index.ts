@@ -61,14 +61,24 @@ const updateAttributeNames = (updateObj: ObjectType): string[] => Object.entries
 	return Array.isArray(value) ? value : Object.keys(value);
 });
 // The update with each attribute named by an alias (`alias`, `aliases` or `map`) renamed to the attribute, as the update looks up attributes by name.
+// Two names for one attribute (an attribute and its alias, in any operator) are rejected, as `Item` rejects them on save, rather than letting the last one win.
 const attributeNamesForAliases = (schema: Schema, updateObj: ObjectType): ObjectType => {
 	const aliases = schema.getInternalProperties(internalProperties).getMapSettingObject();
 	const attributeName = (name: string): string => Object.prototype.hasOwnProperty.call(aliases, name) ? aliases[name] : name;
+	const namedBy = new Map<string, string>();
+	const claim = (name: string): string => {
+		const attribute = attributeName(name);
+		if (namedBy.has(attribute)) {
+			throw new CustomError.InvalidParameter(`Model.update names attribute "${attribute}" more than once ("${namedBy.get(attribute)}" and "${name}"). Name each attribute once.`);
+		}
+		namedBy.set(attribute, name);
+		return attribute;
+	};
 	return Object.entries(updateObj).reduce((result: ObjectType, [key, value]) => {
 		if (!isUpdateOperator(key, value)) {
-			result[attributeName(key)] = value;
+			result[claim(key)] = value;
 		} else {
-			result[key] = Array.isArray(value) ? value.map(attributeName) : Object.fromEntries(Object.entries(value).map(([name, nameValue]) => [attributeName(name), nameValue]));
+			result[key] = Array.isArray(value) ? value.map(claim) : Object.fromEntries(Object.entries(value).map(([name, nameValue]) => [claim(name), nameValue]));
 		}
 		return result;
 	}, {});
@@ -479,7 +489,8 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 			},
 			// DynamoDB rejects a write that sets a key attribute, of the table or of an index (each attribute of a multi-attribute key too), to NULL or an empty string or binary value, and a put without the table's key attributes. So the write fails here, before it's sent. An index key attribute can be left out, which leaves the item out of the index.
 			"checkKeyAttributeValues": async (values: {[attribute: string]: DynamoDB.AttributeValue}, settings: {requireTableKey: boolean}): Promise<void> => {
-				const {TableIndex, GlobalSecondaryIndexes = [], LocalSecondaryIndexes = []} = await this.getInternalProperties(internalProperties).getIndexes();
+				// The table's indexes, which combine those of every model of the table, so an index another model declares is checked too.
+				const {TableIndex, GlobalSecondaryIndexes = [], LocalSecondaryIndexes = []} = await this.getInternalProperties(internalProperties).table().getInternalProperties(internalProperties).getIndexes();
 				TableIndex.KeySchema.forEach(({AttributeName}) => {
 					if (settings.requireTableKey || values[AttributeName] !== undefined) {
 						checkTableKeyValue(AttributeName, values[AttributeName]);
@@ -1087,6 +1098,8 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 			const ifNotExistsNames: string[] = [];
 			const updateTypeNames = updateTypes.map((a) => a.name);
 			const setUpdateType = updateTypes.find((a) => a.name === "$SET");
+			// The `$SET` values as the caller passed them, before conversion. They pick the schema whose `validate` runs, as `schemaForObject` does for a save.
+			const setInput: ObjectType = {};
 			const attributeType = (attribute: string, value: any): string | string[] => {
 				try {
 					return schema.getAttributeType(attribute, value, {"unknownAttributeAllowed": true});
@@ -1108,6 +1121,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 					const wrapInList = !merged && dynamoType === "L" && !Array.isArray(subValue);
 					const objectFromSchemaSettings = merged ? {...setUpdateType.objectFromSchemaSettings, "type": "toDynamo", "customTypesDynamo": true, "saveUnknown": true, "mapAttributes": true, "required": false} : {"type": "toDynamo", "customTypesDynamo": true, "saveUnknown": true, "mapAttributes": true, ...setUpdateType.objectFromSchemaSettings};
 					convertedSet.set(subKey, (await this.Item.objectFromSchema({[subKey]: wrapInList ? [subValue] : subValue}, this, objectFromSchemaSettings as any))[subKey]);
+					setInput[subKey] = subValue;
 				}
 			}
 			const hasValue = ([, value]: [string, any]): boolean => value !== undefined && value !== type.UNDEFINED;
@@ -1125,8 +1139,10 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				// An attribute `set` leaves out isn't written, so the stored value is kept.
 				finalSet = new Map([...[...convertedSet].filter((entry) => !hasValue(entry)), ...Object.entries(result).filter(([attribute]) => !(attribute in keyObject))]);
 			}
-			// The values the update sets, as sent to DynamoDB. The schema's `validate` is called once with them and the key.
-			const setAttributes: ObjectType = Object.fromEntries([...finalSet].filter(hasValue));
+			// The values the update finally sets (`$SET`, including forced defaults, timestamps and Combine values), as JS values before the DynamoDB conversion. The schema's `validate` runs on them with the key.
+			const setAttributes: ObjectType = {};
+			// Set when the update writes a value itself, not only `$ADD`, `$REMOVE` or `$DELETE`. Only then does the schema's `validate` run.
+			let writesValue = false;
 			// Attributes the schema's `set` adds are written after the others.
 			const addedSetAttributes = Object.fromEntries([...finalSet].filter(([attribute]) => !convertedSet.has(attribute)));
 			const addedSetKey = Symbol("addedSetAttributes");
@@ -1169,6 +1185,9 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 
 					if (updateType.name === "$SET" && isMergedObject(subKey, subValue, dynamoType)) {
 						const processed = subValue;
+						// The merged object is what the update sets for this attribute, so it is what's validated.
+						setAttributes[subKey] = processed;
+						writesValue = true;
 						accumulator.ExpressionAttributeNames[`#a${index}`] = subKey;
 						topLevelNameKeys.set(subKey, `#a${index}`);
 						const removedAttributes: string[] = [];
@@ -1228,6 +1247,9 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 					accumulator.ExpressionAttributeNames[expressionKey] = subKey;
 					topLevelNameKeys.set(subKey, expressionKey);
 					if (shouldMerge) {
+						// The merged object is what the update sets for this attribute, so it is what's validated.
+						setAttributes[subKey] = subValue;
+						writesValue = true;
 						index++;
 						flattenForMerge([expressionKey], subValue, accumulator, updateType.operator);
 					} else {
@@ -1237,10 +1259,15 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 						}
 
 						if (dynamoType === "L" && updateType.name === "$ADD") {
+							// A list append stores the old list plus the new items, so its stored value isn't known here and isn't validated.
 							// `list_append` fails on an attribute the item doesn't have, so a missing list is appended to as an empty list.
 							expressionValue = `list_append(if_not_exists(${expressionKey}, ${emptyListMarker}), ${expressionValue})`;
 							usesEmptyList = true;
 							updateType = updateTypes.find((a) => a.name === "$SET");
+						} else if (updateType.name === "$SET") {
+						// The final value, so a forced default that replaces the input or a removal is what's validated.
+							setAttributes[subKey] = subValue;
+							writesValue = true;
 						}
 
 						const operator = updateType.operator || (updateType.attributeOnly ? "" : " ");
@@ -1287,6 +1314,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 					obj.ExpressionAttributeNames[`#a${index}`] = key;
 					topLevelNameKeys.set(key, `#a${index}`);
 					obj.ExpressionAttributeValues[`:v${index}`] = value;
+					setAttributes[key] = value;
 					obj.UpdateExpression[updateType.name.slice(1)].push(`#a${index}${updateType.operator}${expressionValue}`);
 
 					index++;
@@ -1294,15 +1322,6 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 
 				return obj;
 			})()));
-
-			// The schema's `validate` can't see the stored item, so it gets the key and the attributes the update sets. An update that only adds to or removes attributes isn't validated, as it sets no value.
-			const schemaValidator = schema.getInternalProperties(internalProperties).settings.validate;
-			if (schemaValidator && Object.keys(setAttributes).length > 0) {
-				const item = {...await getKeyObject(), ...setAttributes};
-				if (!await schemaValidator(item)) {
-					throw new CustomError.ValidationError(`${JSON.stringify(item)} had a schema validation error when trying to save the item.`);
-				}
-			}
 
 			schema.attributes().map((attribute) => ({attribute, "type": schema.getAttributeTypeDetails(attribute)})).filter((item: any) => {
 				return Array.isArray(item.type) ? item.type.some((type) => type.name === "Combine") : item.type.name === "Combine";
@@ -1340,7 +1359,9 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 					// Numbered from `index` and moves it on, so attributes added after this one (such as `forceDefault` ones) don't reuse the number, and neither does this one reuse a merged document path's value, which is numbered past its name.
 					returnObject.ExpressionAttributeNames[`#a${index}`] = details.attribute;
 					topLevelNameKeys.set(details.attribute, `#a${index}`);
-					returnObject.ExpressionAttributeValues[`:v${index}`] = details.type.typeSettings.attributes.map((attribute) => returnObject.ExpressionAttributeValues[topLevelNameKeys.get(attribute).replace("#a", ":v")]).filter((value) => typeof value !== "undefined" && value !== null).join(details.type.typeSettings.separator);
+					const combinedValue = details.type.typeSettings.attributes.map((attribute) => returnObject.ExpressionAttributeValues[topLevelNameKeys.get(attribute).replace("#a", ":v")]).filter((value) => typeof value !== "undefined" && value !== null).join(details.type.typeSettings.separator);
+					returnObject.ExpressionAttributeValues[`:v${index}`] = combinedValue;
+					setAttributes[details.attribute] = combinedValue;
 					returnObject.UpdateExpression.SET.push(`#a${index} = :v${index}`);
 					index++;
 				}
@@ -1358,11 +1379,25 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 					returnObject.ExpressionAttributeNames[`#a${index}`] = attribute;
 					topLevelNameKeys.set(attribute, `#a${index}`);
 					returnObject.ExpressionAttributeValues[`:v${index}`] = defaultValue;
+					setAttributes[attribute] = defaultValue;
 					returnObject.UpdateExpression[updateType.name.slice(1)].push(`#a${index}${updateType.operator}:v${index}`);
 
 					index++;
 				}
 			}));
+
+			// The schema's `validate` can't see the stored item, so it runs once, on the key and the values the update sets, after they're final (forced defaults, timestamps and Combine values included). `$ADD`, `$REMOVE` and `$DELETE` and list appends aren't validated, as they set no value that is known here.
+			if (writesValue) {
+				// The schema matching the caller's `$SET` input, as a save and a per-attribute conversion pick it, rather than always the first one.
+				const validatingSchema = Object.keys(setInput).length > 0 ? this.getInternalProperties(internalProperties).schemaForObject(setInput) : schema;
+				const schemaValidator = validatingSchema.getInternalProperties(internalProperties).settings.validate;
+				if (schemaValidator) {
+					const item = {...await getKeyObject(), ...setAttributes};
+					if (!await schemaValidator(item)) {
+						throw new CustomError.ValidationError(`${JSON.stringify(item)} had a schema validation error when trying to save the item.`);
+					}
+				}
+			}
 
 			Object.entries(returnObject.ExpressionAttributeNames).forEach(([nameKey, attribute]: [string, string]) => {
 				const valueKey = nameKey.replace("#a", ":v");
