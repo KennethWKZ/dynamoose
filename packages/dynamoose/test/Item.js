@@ -40,6 +40,14 @@ describe("Item", () => {
 		expect(user.model).toEqual("data");
 	});
 
+	it("Should create an item whose first attribute is an object holding null", async () => {
+		const User = dynamoose.model("User", new dynamoose.Schema({"id": String, "data": Object}, {"saveUnknown": true}));
+		new dynamoose.Table("User", [User], {"create": false, "waitForActive": false});
+		const user = new User({"data": {"key": null}, "id": "123"});
+		expect(user.id).toEqual("123");
+		expect((await user.toDynamo()).id).toEqual({"S": "123"});
+	});
+
 	describe("DynamoDB Conversation Methods", () => {
 		let User;
 		beforeEach(() => {
@@ -597,6 +605,18 @@ describe("Item", () => {
 					await callType.func(user).bind(user)();
 					expect(putParams).toEqual([{
 						"Item": {"id": {"N": "1"}, "address": {"M": {"data": {"M": {"country": {"S": "world"}}}, "name": {"S": "Home"}}}},
+						"TableName": "User"
+					}]);
+				});
+
+				it("Should save null values in an Object attribute with saveUnknown set to true as NULL", async () => {
+					putItemFunction = () => Promise.resolve();
+					User = dynamoose.model("User", new Schema({"id": Number, "address": Object}, {"saveUnknown": true}), {"create": false, "waitForActive": false});
+					new dynamoose.Table("User", [User]);
+					user = new User({"id": 1, "address": {"key": null, "data": {"country": null}, "lines": [null, "a"]}, "other": null});
+					await callType.func(user).bind(user)();
+					expect(putParams).toEqual([{
+						"Item": {"id": {"N": "1"}, "address": {"M": {"key": {"NULL": true}, "data": {"M": {"country": {"NULL": true}}}, "lines": {"L": [{"NULL": true}, {"S": "a"}]}}}, "other": {"NULL": true}},
 						"TableName": "User"
 					}]);
 				});
@@ -2766,6 +2786,10 @@ describe("Item", () => {
 			{
 				"input": {"id": {"S": "foo"}, "data": {"NULL": true}},
 				"output": true
+			},
+			{
+				"input": {"data": {"key": null}, "id": "123"},
+				"output": false
 			}
 		];
 
