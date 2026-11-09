@@ -38,6 +38,17 @@ describe("returnValuesOnConditionCheckFailure", () => {
 		{"name": "Callback", "func": (func) => util.promisify(func)}
 	];
 
+	// The client is the caller's, so what it rejects with isn't always an AWS SDK error.
+	describe("A client that rejects without an error", () => {
+		operations.forEach((operation) => {
+			it(`Should reject ${operation.name} with what the client rejected with`, async () => {
+				dynamoose.aws.ddb.set({[operation.method]: () => Promise.reject(undefined)});
+				const result = await operation.run(functionCallTypes[0], {"returnValuesOnConditionCheckFailure": "ALL_OLD"}).then(() => "resolved", (error) => error);
+				expect(result).toBeUndefined();
+			});
+		});
+	});
+
 	operations.forEach((operation) => {
 		describe(operation.name, () => {
 			functionCallTypes.forEach((callType) => {
