@@ -54,7 +54,7 @@
     "url": "https://github.com/dynamoose/dynamoose/issues"
   },
   "dependencies": {
-    "js-object-utilities": "npm:@kennethwkz/js-object-utilities@^2.3.1"
+    "js-object-utilities": "npm:@kennethwkz/js-object-utilities@^2.3.2"
   },
   "license": "Unlicense",
   "keywords": [
