@@ -3139,6 +3139,21 @@ describe("Item", () => {
 			}
 		});
 
+		it("Should convert custom types when the type of another attribute can't be found", async () => {
+			// A Set of Booleans isn't a type DynamoDB has, so its type can't be looked up. The schema is then treated as having custom types, and none is skipped.
+			const model = dynamoose.model("User", {"id": Number, "born": Date, "flags": {"type": Set, "schema": [Boolean]}}, {"create": false, "waitForActive": false});
+			new dynamoose.Table("User", [model]);
+			expect(await model.objectFromSchema({"id": 1, "born": 1000}, model.Model, {"type": "fromDynamo", "customTypesDynamo": true})).toEqual({"id": 1, "born": new Date(1000)});
+		});
+
+		it("Should run a get function on one type of an attribute with several types only for a value", async () => {
+			const model = dynamoose.model("User", {"id": Number, "data": [{"type": String, "get": (value) => value.toUpperCase()}, Number]}, {"create": false, "waitForActive": false});
+			new dynamoose.Table("User", [model]);
+			// Without a value, no type is chosen, so the function is looked up for both types.
+			expect(await model.objectFromSchema({"id": 1}, model.Model, {"type": "fromDynamo", "modifiers": ["get"]})).toEqual({"id": 1});
+			expect(await model.objectFromSchema({"id": 1, "data": "x"}, model.Model, {"type": "fromDynamo", "modifiers": ["get"]})).toEqual({"id": 1, "data": "X"});
+		});
+
 		const basicTests = [
 			{
 				"input": {"id": 1},
@@ -3915,6 +3930,12 @@ describe("Item", () => {
 				"output": {"id": 1, "data": [{"name": "Bob"}]}
 			},
 			{
+				// No type has `data.0.extra`, so it is removed as an attribute the schema doesn't name.
+				"input": [{"id": 1, "data": [{"name": "Bob", "extra": "x"}]}, {"type": "fromDynamo"}],
+				"schema": {"id": Number, "data": [{"type": Set, "schema": [String]}, {"type": Array, "schema": [{"type": Object, "schema": {"name": String}}]}]},
+				"output": {"id": 1, "data": [{"name": "Bob"}]}
+			},
+			{
 				// An attribute with several types has a value of each setting for each type, and the setting applies when any type has it.
 				"input": [{"id": 1, "data": {"b": "x"}}, {"type": "fromDynamo", "mapAttributes": true}],
 				"schema": {"id": Number, "data": [{"type": Object, "schema": {"a": String}, "alias": "payload"}, {"type": Object, "schema": {"b": String}, "alias": "payload"}]},
@@ -3956,6 +3977,12 @@ describe("Item", () => {
 				"input": [{"id": 1, "data": {"b": "x"}}, {"type": "toDynamo"}],
 				"schema": {"id": Number, "data": {"type": [{"type": Object, "schema": {"a": String}}, {"type": Object, "schema": {"b": String}}]}},
 				"output": {"id": 1, "data": {"b": "x"}}
+			},
+			{
+				// A type setting of plain types has no nested attributes, so a map is the wrong type.
+				"input": [{"id": 1, "data": {"x": 1}}, {"type": "toDynamo"}],
+				"schema": {"id": Number, "data": {"type": [String, Number]}},
+				"error": new CustomError.TypeMismatch("Expected data to be of type string, number, instead found type object.")
 			},
 			{
 				// A list read from DynamoDB is never a Set, though a Set accepts an array when saving.
