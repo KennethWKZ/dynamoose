@@ -442,6 +442,22 @@ describe("Item", () => {
 					}]);
 				});
 
+				it("Should save a large buffer, and buffers in a map and a list, whole", async () => {
+					putItemFunction = () => Promise.resolve();
+					User = dynamoose.model("User", {"id": Number, "data": Buffer, "meta": {"type": Object, "schema": {"blob": Buffer}}, "list": {"type": Array, "schema": [Buffer]}});
+					new dynamoose.Table("User", [User]);
+					// The type check and type conversion walk the item's entries. A binary value is one entry: walked byte by byte, a 400 KB one overflowed the stack (dynamoose/dynamoose#1608), and each byte is a key the schema doesn't name.
+					const data = Buffer.alloc(400000, 7);
+					user = new User({"id": 1, data, "meta": {"blob": Buffer.from("ab")}, "list": [Buffer.from("cd")]});
+					await callType.func(user).bind(user)();
+					expect(putParams.length).toEqual(1);
+					const {Item} = putParams[0];
+					expect(Buffer.isBuffer(Item.data.B)).toEqual(true);
+					expect(Buffer.compare(Item.data.B, data)).toEqual(0);
+					expect(Item.meta).toEqual({"M": {"blob": {"B": Buffer.from("ab")}}});
+					expect(Item.list).toEqual({"L": [{"B": Buffer.from("cd")}]});
+				});
+
 				it("Should save with correct object with buffer set using saveUnknown", async () => {
 					putItemFunction = () => Promise.resolve();
 					User = dynamoose.model("User", new Schema({"id": Number}, {"saveUnknown": true}));
