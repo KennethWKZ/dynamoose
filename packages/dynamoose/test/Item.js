@@ -2503,6 +2503,14 @@ describe("Item", () => {
 			expect(await model.objectFromSchema({"id": 1, "born": 1000}, model.Model, {"type": "fromDynamo", "customTypesDynamo": true})).toEqual({"id": 1, "born": new Date(1000)});
 		});
 
+		it("Should run a get function on one type of an attribute with several types only for a value", async () => {
+			const model = dynamoose.model("User", {"id": Number, "data": [{"type": String, "get": (value) => value.toUpperCase()}, Number]}, {"create": false, "waitForActive": false});
+			new dynamoose.Table("User", [model]);
+			// Without a value, no type is chosen, so the function is looked up for both types.
+			expect(await model.objectFromSchema({"id": 1}, model.Model, {"type": "fromDynamo", "modifiers": ["get"]})).toEqual({"id": 1});
+			expect(await model.objectFromSchema({"id": 1, "data": "x"}, model.Model, {"type": "fromDynamo", "modifiers": ["get"]})).toEqual({"id": 1, "data": "X"});
+		});
+
 		const basicTests = [
 			{
 				"input": {"id": 1},

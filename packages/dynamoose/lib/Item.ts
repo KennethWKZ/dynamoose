@@ -52,7 +52,7 @@ export class Item extends InternalPropertiesClass<ItemInternalProperties> {
 	constructor (model: Model<Item>, object?: AttributeMap | ObjectType, settings?: ItemSettings) {
 		super();
 
-		const itemObject = settings?.[returnedByDynamo] || Item.isDynamoObject(object) ? Item.fromDynamo(object as AttributeMap) : object;
+		const itemObject = settings[returnedByDynamo] || Item.isDynamoObject(object) ? Item.fromDynamo(object as AttributeMap) : object;
 		Object.keys(itemObject).forEach((key) => this[key] = itemObject[key]);
 
 		this.setInternalProperties(internalProperties, {
@@ -557,7 +557,8 @@ Item.prepareForObjectFromSchema = async function<T extends InternalPropertiesCla
 };
 // Whether each of an item's attributes is one DynamoDB attribute value (`{"S": "Bob"}`), looking one level deep only. DynamoDB always returns items this way, but a client given to `dynamoose.aws.ddb.set` can return plain objects (`{"name": "Bob"}`).
 function hasAttributeValues (item: AttributeMap): boolean {
-	const values = item && typeof item === "object" ? Object.values(item) : [];
+	// Every read path checks it has an item before converting it.
+	const values = Object.values(item);
 	return values.length > 0 && values.every((value) => {
 		const keys = value && typeof value === "object" ? Object.keys(value) : [];
 		return keys.length === 1 && Boolean(Schema.attributeTypes.findDynamoDBType(keys[0]));
