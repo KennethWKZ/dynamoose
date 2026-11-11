@@ -49,6 +49,7 @@
 
 ### Bug Fixes
 
+- Fixed an attribute whose `type` setting lists plain types next to a `schema` setting (`{"type": [dynamoose.type.NULL, Object], "schema": {...}}`) losing its nested attributes. Saving stored the map empty (`{"M": {}}`), or with `saveUnknown` threw `Unsupported type passed` for a nested `Date`, and reading skipped the nested attributes' custom types. The schema applies to the attribute again, as for a single type
 - Fixed reading an item dropping an attribute with several types that has an `alias` (or `map`/`aliases`) on its types. The attribute was renamed to a key made of its types' empty `defaultAlias` values (`","`) instead of to its alias. Saving through an alias that is a list (`"aliases": ["p", "q"]`) on such an attribute now works too
 - Fixed a schema throwing `Only defaultMap or defaultAlias can be specified per attribute.` for an attribute with several types that has the same `defaultMap` or `defaultAlias` on each type. Different values on different types, or both settings, still throw
 - Fixed saving an item whose attribute with several types gets its `default` value: the attribute's `set`, `validate` and `enum` settings were looked up for all its types at once, so the save failed with a `ValidationError` or `modifierFunction is not a function`. The default value now picks the type, as a value passed in does
