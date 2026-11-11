@@ -16,9 +16,13 @@ import {GetTransactionInput, CreateTransactionInput, DeleteTransactionInput, Upd
 import {applyExpiresToSchemas, Table, TableExpiresSettings, TableOptionsOptional} from "../Table";
 import type from "../type";
 import {InternalPropertiesClass} from "../InternalPropertiesClass";
-import {Instance} from "../Instance";
+import type {Instance} from "../Instance";
 import * as returnValuesOnConditionCheckFailure from "../utils/dynamoose/returnValuesOnConditionCheckFailure";
 import returnModel from "../utils/dynamoose/returnModel";
+// Instance is required when used, never at load: Instance creates its default instance at load, which defines a class extending Table. Required here at load,
+// a program whose first dynamoose module is Table (Table loads Model) would reach Instance while Table is still loading, and fail with
+// "Class extends value undefined is not a constructor or null".
+const defaultInstance = (): Instance => require("../Instance").Instance.default;
 
 // DynamoDB takes at most 100 keys in a `BatchGetItem` request and 25 requests in a `BatchWriteItem` request, so a larger batch is sent as several requests, `concurrency` at a time (one by default), and their responses are combined. If a request fails, no more requests are started and its error is thrown; the items of the requests that finished are already read or written.
 const BATCH_GET_ITEM_LIMIT = 100;
@@ -593,7 +597,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				const table = this.getInternalProperties(internalProperties)._table;
 				if (!table) {
 					const modelObject = returnModel(this);
-					const createdTable = new Table(Instance.default, this.getInternalProperties(internalProperties).tableName, [modelObject], this.getInternalProperties(internalProperties).options);
+					const createdTable = new Table(defaultInstance(), this.getInternalProperties(internalProperties).tableName, [modelObject], this.getInternalProperties(internalProperties).options);
 					this.getInternalProperties(internalProperties)._table = createdTable;
 					return createdTable;
 				}
