@@ -3313,6 +3313,12 @@ describe("Item", () => {
 				"output": {"id": 1, "data": {"b": "x"}}
 			},
 			{
+				// A type setting of plain types has no nested attributes, so a map is the wrong type.
+				"input": [{"id": 1, "data": {"x": 1}}, {"type": "toDynamo"}],
+				"schema": {"id": Number, "data": {"type": [String, Number]}},
+				"error": new CustomError.TypeMismatch("Expected data to be of type string, number, instead found type object.")
+			},
+			{
 				// A list read from DynamoDB is never a Set, though a Set accepts an array when saving.
 				"input": [{"id": 1, "data": ["hello", "world"]}, {"type": "fromDynamo"}],
 				"schema": {"id": Number, "data": [{"type": Set, "schema": [String]}, {"type": Array, "schema": [String]}]},
