@@ -2,6 +2,10 @@
 
 ---
 
+### Maintenance
+
+- Store CLA signatures on a dedicated branch so protected main does not block contributors from signing
+
 ### 🚨 Breaking Changes 🚨
 
 - `Model.update` and `Model.transaction.update` now throw an `InvalidParameter` error, before sending, for an update with nothing to write, such as an empty update object or one whose attributes are all skipped. Before, it was sent and DynamoDB rejected the empty update expression with a `ValidationException`. With `{"return": "request"}` and a callback, the error is passed to the callback
