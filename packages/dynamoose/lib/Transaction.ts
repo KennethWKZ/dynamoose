@@ -6,7 +6,7 @@ import Error from "./Error";
 import {Model} from "./Model";
 import ModelStore from "./ModelStore";
 import {CallbackType} from "./General";
-import {Item} from "./Item";
+import {Item, itemFromDynamoResponse} from "./Item";
 import Internal from "./Internal";
 const {internalProperties, transactionModel} = Internal.General;
 import {Table} from "./Table";
@@ -217,7 +217,7 @@ function Transaction (transactions: Transactions, settings?: TransactionSettings
 			}
 			const table: Table = validTables.find((table) => table.name === tableName);
 			const model: Model<Item> = knownModel ?? await table.getInternalProperties(internalProperties).modelForObject(Item.fromDynamo(attributes));
-			return new model.Item(attributes, {"type": "fromDynamo"}).conformToSchema({"customTypesDynamo": true, "checkExpiredItem": checkExpiredItem, "saveUnknown": true, "modifiers": ["get"], "type": "fromDynamo", "mapAttributes": true});
+			return itemFromDynamoResponse(model, attributes).conformToSchema({"customTypesDynamo": true, "checkExpiredItem": checkExpiredItem, "saveUnknown": true, "modifiers": ["get"], "type": "fromDynamo", "mapAttributes": true});
 		};
 
 		// A transaction DynamoDB canceled for a conflict, or reports as in progress, wrote nothing, so it can be sent again.

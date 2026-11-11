@@ -1,7 +1,7 @@
 import CustomError from "../Error";
 import ModelStore from "../ModelStore";
 import {Schema, SchemaDefinition, DynamoDBSetTypeResult, ValueType, IndexItem, TableIndex} from "../Schema";
-import {Item as ItemCarrier, ItemSaveSettings, ItemSettings, ItemObjectFromSchemaSettings, AnyItem} from "../Item";
+import {Item as ItemCarrier, ItemSaveSettings, ItemSettings, ItemObjectFromSchemaSettings, AnyItem, returnedByDynamo, itemFromDynamoResponse} from "../Item";
 import utils from "../utils";
 import ddb from "../aws/ddb/internal";
 import Internal from "../Internal";
@@ -632,7 +632,8 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 		class Item extends ItemCarrier {
 			static Model: Model<ItemCarrier>;
 			constructor (object: AttributeMap | ObjectType = {}, settings: ItemSettings = {}) {
-				super(self, utils.deep_copy(object), settings);
+				// An item DynamoDB returned is converted into new objects, so only an object passed in is copied.
+				super(self, settings[returnedByDynamo] ? object : utils.deep_copy(object), settings);
 			}
 		}
 		Item.Model = self;
@@ -814,7 +815,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 		const addedKeyAttributes = requestedAttributes ? keyAttributes.filter((attribute) => !requestedAttributes.includes(attribute)) : [];
 		const withoutAddedKeyAttributes = (item: AttributeMap): AttributeMap => Object.fromEntries(Object.entries(item).filter(([attribute]) => !addedKeyAttributes.includes(attribute)));
 
-		const itemify = (item: AttributeMap): Promise<ItemCarrier> => new this.Item(withoutAddedKeyAttributes(item) as any, {"type": "fromDynamo"}).conformToSchema({"customTypesDynamo": true, "checkExpiredItem": true, "saveUnknown": true, "modifiers": ["get"], "type": "fromDynamo", "mapAttributes": true});
+		const itemify = (item: AttributeMap): Promise<ItemCarrier> => itemFromDynamoResponse(this, withoutAddedKeyAttributes(item)).conformToSchema({"customTypesDynamo": true, "checkExpiredItem": true, "saveUnknown": true, "modifiers": ["get"], "type": "fromDynamo", "mapAttributes": true});
 		const prepareResponse = async (response: DynamoDB.BatchGetItemOutput): Promise<ModelBatchGetItemsResponse<ItemCarrier>> => {
 			const responseItems = response.Responses[table.getInternalProperties(internalProperties).name];
 			// `keyObjects` use the DynamoDB attribute names, which `mapAttributes` renames on the converted items, so match keys against the raw response instead.
@@ -1483,7 +1484,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 			};
 		};
 
-		const itemify = (item): Promise<any> => new this.Item(item, {"type": "fromDynamo"}).conformToSchema({"customTypesDynamo": true, "checkExpiredItem": true, "type": "fromDynamo", "saveUnknown": true, "modifiers": ["get"], "mapAttributes": true});
+		const itemify = (item): Promise<any> => itemFromDynamoResponse(this, item).conformToSchema({"customTypesDynamo": true, "checkExpiredItem": true, "type": "fromDynamo", "saveUnknown": true, "modifiers": ["get"], "mapAttributes": true});
 		const localSettings: ModelUpdateSettings = settings;
 		const updateItemParamsPromise: Promise<DynamoDB.UpdateItemInput> = this.getInternalProperties(internalProperties).table().getInternalProperties(internalProperties).pendingTaskPromise().then(async () => ({
 			"Key": this.Item.objectToDynamo(await getKeyObject()),
@@ -1619,7 +1620,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 		}
 
 		const conformToSchemaSettings: ItemObjectFromSchemaSettings = {"customTypesDynamo": true, "checkExpiredItem": true, "saveUnknown": true, "modifiers": ["get"], "type": "fromDynamo", "mapAttributes": true};
-		const itemify = (item: AttributeMap): Promise<ItemCarrier> => new this.Item(item as any, {"type": "fromDynamo"}).conformToSchema(conformToSchemaSettings);
+		const itemify = (item: AttributeMap): Promise<ItemCarrier> => itemFromDynamoResponse(this, item).conformToSchema(conformToSchemaSettings);
 		const table = this.getInternalProperties(internalProperties).table();
 
 		const getItemParamsMethod = async (settings: ModelGetSettings): Promise<DynamoDB.GetItemInput> => {
